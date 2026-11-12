@@ -64,7 +64,12 @@
   async function remoteRead(c){
     const path=c.path.split("/").map(encodeURIComponent).join("/");
     const url=`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${path}?ref=${encodeURIComponent(c.branch)}&nocache=${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const r=await fetch(url,{method:"GET",headers:{...ghHeaders(c.token),"Cache-Control":"no-cache","Pragma":"no-cache"},cache:"no-store"});
+    let r;
+    try {
+      r=await fetch(url,{method:"GET",headers:ghHeaders(c.token),cache:"no-store"});
+    } catch(error) {
+      throw new Error(`Falha de comunicação durante a leitura do data.json (GET). O navegador não conseguiu concluir a requisição ao GitHub. Detalhe: ${error?.message||"erro de rede/CORS"}`);
+    }
     if(r.status===404)return {data:emptyData(),sha:null};
     if(!r.ok){const detail=await r.json().catch(()=>({}));throw new Error(`Falha ao ler data.json (GitHub ${r.status}): ${detail.message||"verifique repositório, branch e permissões."}`)}
     const j=await r.json();
@@ -80,7 +85,12 @@
     const url=`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${path}`;
     const body={message:"Atualiza biblioteca pessoal",content:b64encode(JSON.stringify(payload,null,2)),branch:c.branch};
     if(sha)body.sha=sha;
-    const r=await fetch(url,{method:"PUT",headers:{...ghHeaders(c.token),"Content-Type":"application/json","Cache-Control":"no-cache"},cache:"no-store",body:JSON.stringify(body)});
+    let r;
+    try {
+      r=await fetch(url,{method:"PUT",headers:{...ghHeaders(c.token),"Content-Type":"application/json"},cache:"no-store",body:JSON.stringify(body)});
+    } catch(error) {
+      throw new Error(`Falha de comunicação durante a gravação do data.json (PUT). O navegador não conseguiu concluir a requisição ao GitHub. Detalhe: ${error?.message||"erro de rede/CORS"}`);
+    }
     if(!r.ok){const j=await r.json().catch(()=>({}));const error=new Error(`GitHub ${r.status}: ${j.message||`Falha ao gravar no GitHub (${r.status}).`}`);error.status=r.status;throw error}
     return r.json();
   }
