@@ -1,4 +1,4 @@
-const CACHE = "minha-colecao-v6";
+const CACHE = "minha-colecao-v7";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.webmanifest", "./icons/icon.svg"];
 
 self.addEventListener("install", event => {

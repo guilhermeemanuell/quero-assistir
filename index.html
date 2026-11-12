@@ -87,15 +87,19 @@
       <p class="field-hint">A busca automática usa sua chave TMDB configurada em Ajustes. Você também pode cadastrar manualmente.</p>
       <div id="search-results" class="search-results"></div>
       <div id="selection-bar" class="selection-bar" hidden><span id="selected-count">0 selecionado(s)</span><button type="button" class="primary-button" id="add-selected" disabled>Adicionar selecionados</button></div>
-      <div class="manual-divider"><span>OU CADASTRE MANUALMENTE</span></div>
-      <div class="form-grid">
-        <label class="field-label full">Tipo de título<select id="manual-kind"><option value="movie">Filme</option><option value="tv">Série</option></select></label>
-        <label class="field-label full">Título<input id="manual-title" required maxlength="140" placeholder="Nome do filme ou série"></label>
-        <label class="field-label">Ano<input id="manual-year" type="number" min="1888" max="2100" placeholder="2026"></label>
-        <label class="field-label">Nota IMDb<input id="manual-imdb" type="number" min="0" max="10" step="0.1" placeholder="Ex.: 8.7"></label>
-        <label class="field-label full">URL da capa (opcional)<input id="manual-poster" type="url" placeholder="https://..."></label>
-      </div>
-      <div class="dialog-actions"><button type="button" class="secondary-button" id="cancel-add">Cancelar</button><button type="submit" class="primary-button">Adicionar à lista</button></div>
+      <details class="manual-section" id="manual-section">
+        <summary><span class="manual-chevron" aria-hidden="true">⌄</span><span>Cadastre manualmente</span><small>Preencher os dados do título</small></summary>
+        <div class="manual-content">
+          <div class="form-grid">
+            <label class="field-label full">Tipo de título<select id="manual-kind"><option value="movie">Filme</option><option value="tv">Série</option></select></label>
+            <label class="field-label full">Título<input id="manual-title" required maxlength="140" placeholder="Nome do filme ou série"></label>
+            <label class="field-label">Ano<input id="manual-year" type="number" min="1888" max="2100" placeholder="2026"></label>
+            <label class="field-label">Nota IMDb<input id="manual-imdb" type="number" min="0" max="10" step="0.1" placeholder="Ex.: 8.7"></label>
+            <label class="field-label full">URL da capa (opcional)<input id="manual-poster" type="url" placeholder="https://..."></label>
+          </div>
+          <div class="dialog-actions"><button type="button" class="secondary-button" id="cancel-add">Cancelar</button><button type="submit" class="primary-button">Adicionar à lista</button></div>
+        </div>
+      </details>
       <p id="add-error" class="error-message" role="alert"></p>
     </form>
   </dialog>

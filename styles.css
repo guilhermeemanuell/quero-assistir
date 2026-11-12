@@ -52,3 +52,15 @@
 .detail-synopsis .synopsis-muted{color:var(--muted)}
 .synopsis-note{display:block;color:var(--muted);font-size:10px;margin-top:8px}
 @media(max-width:560px){.selection-bar{align-items:stretch;flex-direction:column}.selection-bar .primary-button{width:100%;font-size:14px}.detail-synopsis p{font-size:14px;line-height:1.7}}
+
+
+/* Cadastro manual recolhido por padrão no modal de novo título */
+.manual-section{margin-top:20px;border-top:1px solid var(--line);padding-top:14px}
+.manual-section summary{display:flex;align-items:center;gap:10px;list-style:none;cursor:pointer;min-height:42px;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:#20232d;color:var(--text);font-size:13px;font-weight:800;user-select:none}
+.manual-section summary::-webkit-details-marker{display:none}
+.manual-section summary:hover,.manual-section summary:focus-visible{border-color:#9b5cffaa;outline:none}
+.manual-chevron{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:7px;background:#34264b;color:#d7bdff;font-size:18px;transition:transform .18s}
+.manual-section[open] .manual-chevron{transform:rotate(180deg)}
+.manual-section summary small{margin-left:auto;color:var(--muted);font-size:10px;font-weight:500}
+.manual-content{padding-top:8px}
+@media(max-width:560px){.manual-section summary{font-size:14px;min-height:46px}.manual-section summary small{font-size:12px}}
