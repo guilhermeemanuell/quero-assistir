@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101116">
+  <meta name="description" content="Sua biblioteca pessoal de filmes e séries.">
+  <title>Minha Coleção</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Minha Coleção - início">
+        <span class="brand-mark">✦</span>
+        <span>minha<span class="brand-accent">coleção</span></span>
+      </a>
+      <div class="top-actions">
+        <span id="sync-indicator" class="sync-indicator" title="Estado da sincronização"><i></i><span>Somente neste dispositivo</span></span>
+        <button class="icon-button" id="settings-open" aria-label="Configurações" title="Configurações">⚙</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">SUA BIBLIOTECA PARTICULAR</p>
+          <h1>O que vamos<br><span>assistir depois?</span></h1>
+          <p class="hero-copy">Guarde os títulos que despertaram sua curiosidade.</p>
+        </div>
+        <div class="hero-orbit" aria-hidden="true"><span>▶</span></div>
+      </section>
+
+      <section class="stats" aria-label="Resumo da coleção">
+        <article class="stat-card"><span class="stat-icon purple">▣</span><div><strong id="movie-count">0</strong><small>Filmes</small></div></article>
+        <article class="stat-card"><span class="stat-icon pink">▤</span><div><strong id="series-count">0</strong><small>Séries</small></div></article>
+        <article class="stat-card"><span class="stat-icon gold">★</span><div><strong id="watched-count">0</strong><small>Assistidos</small></div></article>
+      </section>
+
+      <section class="library-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">EXPLORE SUA LISTA</p><h2>Minha biblioteca</h2></div>
+          <button class="primary-button" id="add-open"><span>＋</span> Adicionar título</button>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Tipo de conteúdo">
+          <button class="tab active" data-kind="movie" role="tab" aria-selected="true">▣ Filmes <span id="tab-movie-count">0</span></button>
+          <button class="tab" data-kind="tv" role="tab" aria-selected="false">▤ Séries <span id="tab-tv-count">0</span></button>
+        </div>
+
+        <div class="toolbar">
+          <label class="search-box"><span>⌕</span><input id="search-input" type="search" placeholder="Buscar na sua coleção..." autocomplete="off"></label>
+          <select id="status-filter" aria-label="Filtrar por status">
+            <option value="all">Todos os títulos</option>
+            <option value="pending">Quero assistir</option>
+            <option value="watched">Já assisti</option>
+          </select>
+          <select id="sort-select" aria-label="Ordenar títulos">
+            <option value="added">Adicionados recentemente</option>
+            <option value="title">Nome (A–Z)</option>
+            <option value="imdb">Nota IMDb (maior)</option>
+            <option value="myRating">Minha nota (maior)</option>
+            <option value="year">Ano (mais recente)</option>
+          </select>
+        </div>
+
+        <div id="collection-grid" class="collection-grid"></div>
+        <div id="empty-state" class="empty-state">
+          <div class="empty-art">✧</div>
+          <h3>Sua próxima maratona começa aqui</h3>
+          <p>Adicione filmes e séries que você quer assistir. Eles ficarão organizados nesta biblioteca.</p>
+          <button class="primary-button" id="empty-add">＋ Adicionar primeiro título</button>
+        </div>
+      </section>
+    </main>
+
+    <footer><span>MINHA COLEÇÃO</span><span>Feito para organizar suas próximas histórias.</span></footer>
+  </div>
+
+  <dialog id="add-dialog" class="dialog">
+    <form method="dialog" class="dialog-card" id="add-form">
+      <div class="dialog-heading"><div><p class="eyebrow">ADICIONAR À BIBLIOTECA</p><h2>Novo título</h2></div><button class="icon-button close-dialog" aria-label="Fechar">×</button></div>
+      <div class="kind-switch"><button type="button" class="kind-choice selected" data-add-kind="movie">▣ Filme</button><button type="button" class="kind-choice" data-add-kind="tv">▤ Série</button></div>
+      <label class="field-label" for="title-search">Pesquisar título</label>
+      <div class="search-row"><input id="title-search" type="search" placeholder="Ex.: Interestelar" autocomplete="off"><button type="button" class="secondary-button" id="search-title-button">Buscar</button></div>
+      <p class="field-hint">A busca automática usa sua chave TMDB configurada em Ajustes. Você também pode cadastrar manualmente.</p>
+      <div id="search-results" class="search-results"></div>
+      <div class="manual-divider"><span>OU CADASTRE MANUALMENTE</span></div>
+      <div class="form-grid">
+        <label class="field-label full">Título<input id="manual-title" required maxlength="140" placeholder="Nome do filme ou série"></label>
+        <label class="field-label">Ano<input id="manual-year" type="number" min="1888" max="2100" placeholder="2026"></label>
+        <label class="field-label">Nota IMDb<input id="manual-imdb" type="number" min="0" max="10" step="0.1" placeholder="Ex.: 8.7"></label>
+        <label class="field-label full">URL da capa (opcional)<input id="manual-poster" type="url" placeholder="https://..."></label>
+      </div>
+      <div class="dialog-actions"><button type="button" class="secondary-button" id="cancel-add">Cancelar</button><button type="submit" class="primary-button">Adicionar à lista</button></div>
+      <p id="add-error" class="error-message" role="alert"></p>
+    </form>
+  </dialog>
+
+  <dialog id="settings-dialog" class="dialog">
+    <form method="dialog" class="dialog-card settings-card" id="settings-form">
+      <div class="dialog-heading"><div><p class="eyebrow">PREFERÊNCIAS E SINCRONIZAÇÃO</p><h2>Configurações</h2></div><button class="icon-button close-dialog" aria-label="Fechar">×</button></div>
+      <div class="settings-section">
+        <h3>Sincronização privada pelo GitHub</h3>
+        <p>Use um repositório <strong>privado</strong> separado para guardar sua biblioteca. O token fica salvo somente neste dispositivo.</p>
+        <label class="field-label">Usuário ou organização<input id="gh-owner" placeholder="seu-usuario"></label>
+        <label class="field-label">Nome do repositório privado<input id="gh-repo" placeholder="minha-colecao-dados"></label>
+        <label class="field-label">Branch<input id="gh-branch" value="main"></label>
+        <label class="field-label">Caminho do arquivo<input id="gh-path" value="data.json"></label>
+        <label class="field-label">Token de acesso pessoal<input id="gh-token" type="password" autocomplete="off" placeholder="github_pat_..." spellcheck="false"></label>
+        <p class="field-hint">Crie um Fine-grained personal access token limitado ao repositório privado, com permissão Contents: Read and write. Não coloque o token nos arquivos do site.</p>
+        <div class="settings-actions"><button type="button" class="secondary-button" id="test-sync">Testar conexão</button><button type="button" class="primary-button" id="save-settings">Salvar configurações</button></div>
+        <div class="sync-actions"><button type="button" class="secondary-button" id="sync-now">↻ Sincronizar agora</button><span id="sync-message" class="field-hint"></span></div>
+      </div>
+      <div class="settings-section">
+        <h3>Busca automática de títulos</h3>
+        <p>TMDB localiza filmes, séries e pôsteres. OMDb consulta a nota do IMDb quando há uma chave configurada.</p>
+        <label class="field-label">Chave API do TMDB<input id="tmdb-key" type="password" autocomplete="off" placeholder="Chave de API do TMDB"></label>
+        <label class="field-label">Chave API do OMDb (opcional)<input id="omdb-key" type="password" autocomplete="off" placeholder="Chave de API do OMDb"></label>
+        <p class="field-hint">As chaves são guardadas localmente neste navegador. Sem elas, você ainda pode cadastrar títulos manualmente.</p>
+        <button type="button" class="primary-button" id="save-api-keys">Salvar chaves</button>
+      </div>
+      <div class="settings-section">
+        <h3>Dados locais</h3>
+        <p>Faça uma cópia da biblioteca em formato JSON ou importe um backup.</p>
+        <div class="settings-actions"><button type="button" class="secondary-button" id="export-data">Exportar backup</button><label class="secondary-button file-button">Importar backup<input id="import-data" type="file" accept="application/json,.json" hidden></label></div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="detail-dialog" class="dialog">
+    <form method="dialog" class="dialog-card detail-card" id="detail-form">
+      <button class="icon-button detail-close close-dialog" aria-label="Fechar">×</button>
+      <div id="detail-content"></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="./app.js"></script>
+</body>
+</html>

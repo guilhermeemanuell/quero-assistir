@@ -1,0 +1,19 @@
+{
+  "name": "Minha Coleção — Filmes e Séries",
+  "short_name": "Minha Coleção",
+  "description": "Sua biblioteca pessoal de filmes e séries.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#101116",
+  "theme_color": "#101116",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "./icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
