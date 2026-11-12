@@ -34,12 +34,12 @@
       </section>
 
       <section class="stats" aria-label="Resumo da coleção">
-        <article class="stat-card"><span class="stat-icon purple">▣</span><div><strong id="movie-count">0</strong><small>Filmes</small></div></article>
-        <article class="stat-card"><span class="stat-icon pink">▤</span><div><strong id="series-count">0</strong><small>Séries</small></div></article>
-        <article class="stat-card"><span class="stat-icon gold">★</span><div><strong id="watched-count">0</strong><small>Assistidos</small></div></article>
+        <button type="button" class="stat-card stat-action" data-stat-filter="movie" aria-label="Mostrar filmes cadastrados"><span class="stat-icon purple">▣</span><span class="stat-copy"><strong id="movie-count">0</strong><small>Filmes</small></span></button>
+        <button type="button" class="stat-card stat-action" data-stat-filter="tv" aria-label="Mostrar séries cadastradas"><span class="stat-icon pink">▤</span><span class="stat-copy"><strong id="series-count">0</strong><small>Séries</small></span></button>
+        <button type="button" class="stat-card stat-action" data-stat-filter="watched" aria-label="Mostrar títulos assistidos"><span class="stat-icon gold">★</span><span class="stat-copy"><strong id="watched-count">0</strong><small>Assistidos</small></span></button>
       </section>
 
-      <section class="library-section">
+      <section class="library-section" id="library-section">
         <div class="section-heading">
           <div><p class="eyebrow">EXPLORE SUA LISTA</p><h2>Minha biblioteca</h2></div>
           <button class="primary-button" id="add-open"><span>＋</span> Adicionar título</button>
@@ -82,13 +82,13 @@
   <dialog id="add-dialog" class="dialog">
     <form method="dialog" class="dialog-card" id="add-form">
       <div class="dialog-heading"><div><p class="eyebrow">ADICIONAR À BIBLIOTECA</p><h2>Novo título</h2></div><button class="icon-button close-dialog" aria-label="Fechar">×</button></div>
-      <div class="kind-switch"><button type="button" class="kind-choice selected" data-add-kind="movie">▣ Filme</button><button type="button" class="kind-choice" data-add-kind="tv">▤ Série</button></div>
       <label class="field-label" for="title-search">Pesquisar título</label>
       <div class="search-row"><input id="title-search" type="search" placeholder="Ex.: Interestelar" autocomplete="off"><button type="button" class="secondary-button" id="search-title-button">Buscar</button></div>
       <p class="field-hint">A busca automática usa sua chave TMDB configurada em Ajustes. Você também pode cadastrar manualmente.</p>
       <div id="search-results" class="search-results"></div>
       <div class="manual-divider"><span>OU CADASTRE MANUALMENTE</span></div>
       <div class="form-grid">
+        <label class="field-label full">Tipo de título<select id="manual-kind"><option value="movie">Filme</option><option value="tv">Série</option></select></label>
         <label class="field-label full">Título<input id="manual-title" required maxlength="140" placeholder="Nome do filme ou série"></label>
         <label class="field-label">Ano<input id="manual-year" type="number" min="1888" max="2100" placeholder="2026"></label>
         <label class="field-label">Nota IMDb<input id="manual-imdb" type="number" min="0" max="10" step="0.1" placeholder="Ex.: 8.7"></label>
