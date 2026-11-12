@@ -61,24 +61,38 @@
   function ghHeaders(token){return {"Authorization":`Bearer ${token}`,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}}
   function b64encode(str){const bytes=new TextEncoder().encode(str);let binary="";bytes.forEach(b=>binary+=String.fromCharCode(b));return btoa(binary)}
   function b64decode(b64){const binary=atob(b64.replace(/\n/g,""));const bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));return new TextDecoder().decode(bytes)}
-  async function remoteRead(c){const url=`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${c.path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(c.branch)}`;const r=await fetch(url,{headers:ghHeaders(c.token)});if(r.status===404)return {data:emptyData(),sha:null};if(!r.ok)throw new Error(`GitHub respondeu ${r.status}. Verifique repositório, branch e permissões.`);const j=await r.json();return {data:JSON.parse(b64decode(j.content)),sha:j.sha}}
+  async function remoteRead(c){
+    const url=`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${c.path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(c.branch)}&_=${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const r=await fetch(url,{headers:{...ghHeaders(c.token),"Cache-Control":"no-cache","Pragma":"no-cache"},cache:"no-store"});
+    if(r.status===404)return {data:emptyData(),sha:null};
+    if(!r.ok){const detail=await r.json().catch(()=>({}));throw new Error(`Falha ao ler data.json (GitHub ${r.status}): ${detail.message||"verifique repositório, branch e permissões."}`)}
+    const j=await r.json();
+    return {data:JSON.parse(b64decode(j.content)),sha:j.sha};
+  }
   function mergeData(local,remote){const map=new Map();[...(remote.items||[]),...(local.items||[])].forEach(item=>{const old=map.get(item.id);if(!old||new Date(item.updatedAt||item.createdAt||0)>=new Date(old.updatedAt||old.createdAt||0))map.set(item.id,item)});const deleted=new Map();[...(remote.deleted||[]),...(local.deleted||[])].forEach(entry=>{const old=deleted.get(entry.id);if(!old||new Date(entry.deletedAt)>new Date(old.deletedAt))deleted.set(entry.id,entry)});for(const [id,entry] of deleted){const item=map.get(id);if(item&&new Date(entry.deletedAt)>=new Date(item.updatedAt||item.createdAt||0))map.delete(id)}
     const ls=local.settings||{},rs=remote.settings||{},localKeys=ls.apiKeys||{},remoteKeys=rs.apiKeys||{};const localHas=!!(localKeys.tmdbKey||localKeys.omdbKey),remoteHas=!!(remoteKeys.tmdbKey||remoteKeys.omdbKey);let chosen;
     if(localHas&&remoteHas)chosen=new Date(ls.updatedAt||0)>=new Date(rs.updatedAt||0)?ls:rs;else if(localHas)chosen=ls;else if(remoteHas)chosen=rs;else chosen=new Date(ls.updatedAt||0)>=new Date(rs.updatedAt||0)?ls:rs;
     return {version:1,items:[...map.values()],deleted:[...deleted.values()],settings:{apiKeys:{tmdbKey:chosen?.apiKeys?.tmdbKey||"",omdbKey:chosen?.apiKeys?.omdbKey||""},updatedAt:chosen?.updatedAt||null},updatedAt:new Date().toISOString()}}
-  async function remoteWrite(c,payload,sha){const url=`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${c.path.split("/").map(encodeURIComponent).join("/")}`;const body={message:"Atualiza biblioteca pessoal",content:b64encode(JSON.stringify(payload,null,2)),branch:c.branch};if(sha)body.sha=sha;const r=await fetch(url,{method:"PUT",headers:{...ghHeaders(c.token),"Content-Type":"application/json"},body:JSON.stringify(body)});if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(`GitHub ${r.status}: ${j.message||`Falha ao gravar no GitHub (${r.status}).`}`)}return r.json()}
+  async function remoteWrite(c,payload,sha){
+    const url=`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${c.path.split("/").map(encodeURIComponent).join("/")}`;
+    const body={message:"Atualiza biblioteca pessoal",content:b64encode(JSON.stringify(payload,null,2)),branch:c.branch};
+    if(sha)body.sha=sha;
+    const r=await fetch(url,{method:"PUT",headers:{...ghHeaders(c.token),"Content-Type":"application/json","Cache-Control":"no-cache"},cache:"no-store",body:JSON.stringify(body)});
+    if(!r.ok){const j=await r.json().catch(()=>({}));const message=j.message||`Falha ao gravar no GitHub (${r.status}).`;const error=new Error(`GitHub ${r.status}: ${message}`);error.status=r.status;throw error}
+    return r.json();
+  }
   function validateGitHub(c){if(!c.owner||!c.repo||!c.token)throw new Error("Preencha usuário, repositório privado e token nas configurações.");}
   function isShaConflict(error){
     const message=String(error?.message||error||"");
-    return /sha|409|422|does not match|already exists|must be a blob/i.test(message);
+    return error?.status===409 || error?.status===422 || /sha|409|422|does not match|already exists|must be a blob|reference update failed/i.test(message);
   }
   function wait(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
   async function writeWithShaRetry(c, initialPayload){
     let payload=initialPayload;
     let lastError=null;
-    // Re-read the latest file before each retry. This handles stale SHA values
-    // and the race where two devices create/update data.json at nearly the same time.
-    for(let attempt=0;attempt<5;attempt++){
+    // Cada tentativa busca o SHA mais recente sem usar cache HTTP.
+    // A pausa progressiva reduz colisões quando o outro aparelho está gravando.
+    for(let attempt=0;attempt<8;attempt++){
       const latest=await remoteRead(c);
       payload=mergeData(payload,latest.data);
       try{
@@ -86,8 +100,8 @@
         return payload;
       }catch(error){
         lastError=error;
-        if(!isShaConflict(error)||attempt===4)throw error;
-        await wait(350*(attempt+1));
+        if(!isShaConflict(error)||attempt===7)throw error;
+        await wait(Math.min(5000,500*(attempt+1)) + Math.floor(Math.random()*250));
       }
     }
     throw lastError||new Error("Não foi possível atualizar data.json após várias tentativas.");
