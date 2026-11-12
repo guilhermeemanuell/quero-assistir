@@ -1,4 +1,4 @@
-const CACHE = "quero-assistir-v11";
+const CACHE = "quero-assistir-v12";
 const ASSETS = [
   "./",
   "./index.html",
@@ -8,6 +8,8 @@ const ASSETS = [
   "./favicon.ico",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+  "./icons/icon-maskable-192.png",
+  "./icons/icon-maskable-512.png",
   "./icons/apple-touch-icon.png",
   "./icons/favicon-32.png"
 ];
