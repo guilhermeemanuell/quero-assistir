@@ -62,11 +62,13 @@
   function b64encode(str){const bytes=new TextEncoder().encode(str);let binary="";bytes.forEach(b=>binary+=String.fromCharCode(b));return btoa(binary)}
   function b64decode(b64){const binary=atob(b64.replace(/\n/g,""));const bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));return new TextDecoder().decode(bytes)}
   async function remoteRead(c){
-    const url=`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${c.path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(c.branch)}&_=${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const r=await fetch(url,{headers:{...ghHeaders(c.token),"Cache-Control":"no-cache","Pragma":"no-cache"},cache:"no-store"});
+    const path=c.path.split("/").map(encodeURIComponent).join("/");
+    const url=`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${path}?ref=${encodeURIComponent(c.branch)}&nocache=${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const r=await fetch(url,{method:"GET",headers:{...ghHeaders(c.token),"Cache-Control":"no-cache","Pragma":"no-cache"},cache:"no-store"});
     if(r.status===404)return {data:emptyData(),sha:null};
     if(!r.ok){const detail=await r.json().catch(()=>({}));throw new Error(`Falha ao ler data.json (GitHub ${r.status}): ${detail.message||"verifique repositório, branch e permissões."}`)}
     const j=await r.json();
+    if(!j.sha||!j.content)throw new Error("O GitHub não retornou o SHA ou o conteúdo de data.json.");
     return {data:JSON.parse(b64decode(j.content)),sha:j.sha};
   }
   function mergeData(local,remote){const map=new Map();[...(remote.items||[]),...(local.items||[])].forEach(item=>{const old=map.get(item.id);if(!old||new Date(item.updatedAt||item.createdAt||0)>=new Date(old.updatedAt||old.createdAt||0))map.set(item.id,item)});const deleted=new Map();[...(remote.deleted||[]),...(local.deleted||[])].forEach(entry=>{const old=deleted.get(entry.id);if(!old||new Date(entry.deletedAt)>new Date(old.deletedAt))deleted.set(entry.id,entry)});for(const [id,entry] of deleted){const item=map.get(id);if(item&&new Date(entry.deletedAt)>=new Date(item.updatedAt||item.createdAt||0))map.delete(id)}
@@ -74,11 +76,12 @@
     if(localHas&&remoteHas)chosen=new Date(ls.updatedAt||0)>=new Date(rs.updatedAt||0)?ls:rs;else if(localHas)chosen=ls;else if(remoteHas)chosen=rs;else chosen=new Date(ls.updatedAt||0)>=new Date(rs.updatedAt||0)?ls:rs;
     return {version:1,items:[...map.values()],deleted:[...deleted.values()],settings:{apiKeys:{tmdbKey:chosen?.apiKeys?.tmdbKey||"",omdbKey:chosen?.apiKeys?.omdbKey||""},updatedAt:chosen?.updatedAt||null},updatedAt:new Date().toISOString()}}
   async function remoteWrite(c,payload,sha){
-    const url=`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${c.path.split("/").map(encodeURIComponent).join("/")}`;
+    const path=c.path.split("/").map(encodeURIComponent).join("/");
+    const url=`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${path}`;
     const body={message:"Atualiza biblioteca pessoal",content:b64encode(JSON.stringify(payload,null,2)),branch:c.branch};
     if(sha)body.sha=sha;
     const r=await fetch(url,{method:"PUT",headers:{...ghHeaders(c.token),"Content-Type":"application/json","Cache-Control":"no-cache"},cache:"no-store",body:JSON.stringify(body)});
-    if(!r.ok){const j=await r.json().catch(()=>({}));const message=j.message||`Falha ao gravar no GitHub (${r.status}).`;const error=new Error(`GitHub ${r.status}: ${message}`);error.status=r.status;throw error}
+    if(!r.ok){const j=await r.json().catch(()=>({}));const error=new Error(`GitHub ${r.status}: ${j.message||`Falha ao gravar no GitHub (${r.status}).`}`);error.status=r.status;throw error}
     return r.json();
   }
   function validateGitHub(c){if(!c.owner||!c.repo||!c.token)throw new Error("Preencha usuário, repositório privado e token nas configurações.");}
@@ -90,9 +93,7 @@
   async function writeWithShaRetry(c, initialPayload){
     let payload=initialPayload;
     let lastError=null;
-    // Cada tentativa busca o SHA mais recente sem usar cache HTTP.
-    // A pausa progressiva reduz colisões quando o outro aparelho está gravando.
-    for(let attempt=0;attempt<8;attempt++){
+    for(let attempt=0;attempt<12;attempt++){
       const latest=await remoteRead(c);
       payload=mergeData(payload,latest.data);
       try{
@@ -100,8 +101,8 @@
         return payload;
       }catch(error){
         lastError=error;
-        if(!isShaConflict(error)||attempt===7)throw error;
-        await wait(Math.min(5000,500*(attempt+1)) + Math.floor(Math.random()*250));
+        if(!isShaConflict(error)||attempt===11)throw error;
+        await wait(Math.min(8000,700*(attempt+1))+Math.floor(Math.random()*400));
       }
     }
     throw lastError||new Error("Não foi possível atualizar data.json após várias tentativas.");
