@@ -10,6 +10,7 @@
   let addKind = "movie";
   let selectedSearch = null;
   let toastTimer;
+  let syncInProgress = false;
   let syncTimer;
 
   function loadLocal(){try{const stored=JSON.parse(localStorage.getItem(STORAGE)||"{}");return {...emptyData(),...stored,settings:{...emptyData().settings,...(stored.settings||{}),apiKeys:{...emptyData().settings.apiKeys,...(stored.settings?.apiKeys||{})}}}}catch{return emptyData()}}
@@ -65,15 +66,73 @@
     const ls=local.settings||{},rs=remote.settings||{},localKeys=ls.apiKeys||{},remoteKeys=rs.apiKeys||{};const localHas=!!(localKeys.tmdbKey||localKeys.omdbKey),remoteHas=!!(remoteKeys.tmdbKey||remoteKeys.omdbKey);let chosen;
     if(localHas&&remoteHas)chosen=new Date(ls.updatedAt||0)>=new Date(rs.updatedAt||0)?ls:rs;else if(localHas)chosen=ls;else if(remoteHas)chosen=rs;else chosen=new Date(ls.updatedAt||0)>=new Date(rs.updatedAt||0)?ls:rs;
     return {version:1,items:[...map.values()],deleted:[...deleted.values()],settings:{apiKeys:{tmdbKey:chosen?.apiKeys?.tmdbKey||"",omdbKey:chosen?.apiKeys?.omdbKey||""},updatedAt:chosen?.updatedAt||null},updatedAt:new Date().toISOString()}}
-  async function remoteWrite(c,payload,sha){const url=`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${c.path.split("/").map(encodeURIComponent).join("/")}`;const body={message:"Atualiza biblioteca pessoal",content:b64encode(JSON.stringify(payload,null,2)),branch:c.branch};if(sha)body.sha=sha;const r=await fetch(url,{method:"PUT",headers:{...ghHeaders(c.token),"Content-Type":"application/json"},body:JSON.stringify(body)});if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.message||`Falha ao gravar no GitHub (${r.status}).`)}return r.json()}
+  async function remoteWrite(c,payload,sha){const url=`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${c.path.split("/").map(encodeURIComponent).join("/")}`;const body={message:"Atualiza biblioteca pessoal",content:b64encode(JSON.stringify(payload,null,2)),branch:c.branch};if(sha)body.sha=sha;const r=await fetch(url,{method:"PUT",headers:{...ghHeaders(c.token),"Content-Type":"application/json"},body:JSON.stringify(body)});if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(`GitHub ${r.status}: ${j.message||`Falha ao gravar no GitHub (${r.status}).`}`)}return r.json()}
   function validateGitHub(c){if(!c.owner||!c.repo||!c.token)throw new Error("Preencha usuário, repositório privado e token nas configurações.");}
-  async function syncGitHub(testOnly=false){const c=getConfig();try{validateGitHub(c);setSyncState("busy","Conectando ao GitHub...");$("#sync-message").textContent="Conectando...";
-      let remote=await remoteRead(c);if(testOnly){setSyncState("connected","GitHub conectado");$("#sync-message").textContent="Conexão e leitura funcionando.";toast("Conexão com o GitHub validada.");return}
-      const legacyKeys={tmdbKey:c.tmdbKey||"",omdbKey:c.omdbKey||""};if((legacyKeys.tmdbKey||legacyKeys.omdbKey)&&!data.settings?.updatedAt){data.settings={apiKeys:legacyKeys,updatedAt:new Date().toISOString()}}
-      let merged=mergeData(data,remote.data);
-      try{await remoteWrite(c,merged,remote.sha)}catch(e){if(/sha|409|does not match/i.test(e.message)){remote=await remoteRead(c);merged=mergeData(merged,remote.data);await remoteWrite(c,merged,remote.sha)}else throw e}
-      data=merged;localStorage.setItem(STORAGE,JSON.stringify(data));const updatedConfig=getConfig();updatedConfig.tmdbKey=data.settings?.apiKeys?.tmdbKey||"";updatedConfig.omdbKey=data.settings?.apiKeys?.omdbKey||"";setConfig(updatedConfig);if($("#tmdb-key"))$("#tmdb-key").value=updatedConfig.tmdbKey;if($("#omdb-key"))$("#omdb-key").value=updatedConfig.omdbKey;render();setSyncState("connected","Sincronizado com GitHub");$("#sync-message").textContent=`Sincronizado em ${new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}.`;toast("Biblioteca sincronizada com o GitHub.");
-    }catch(e){setSyncState("","Falha na sincronização");$("#sync-message").textContent=e.message;toast(e.message)}}
+  function isShaConflict(error){
+    const message=String(error?.message||error||"");
+    return /sha|409|422|does not match|already exists|must be a blob/i.test(message);
+  }
+  function wait(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
+  async function writeWithShaRetry(c, initialPayload){
+    let payload=initialPayload;
+    let lastError=null;
+    // Re-read the latest file before each retry. This handles stale SHA values
+    // and the race where two devices create/update data.json at nearly the same time.
+    for(let attempt=0;attempt<5;attempt++){
+      const latest=await remoteRead(c);
+      payload=mergeData(payload,latest.data);
+      try{
+        await remoteWrite(c,payload,latest.sha);
+        return payload;
+      }catch(error){
+        lastError=error;
+        if(!isShaConflict(error)||attempt===4)throw error;
+        await wait(350*(attempt+1));
+      }
+    }
+    throw lastError||new Error("Não foi possível atualizar data.json após várias tentativas.");
+  }
+  async function syncGitHub(testOnly=false){
+    if(syncInProgress){toast("Já existe uma sincronização em andamento.");return}
+    syncInProgress=true;
+    const c=getConfig();
+    try{
+      validateGitHub(c);
+      setSyncState("busy","Conectando ao GitHub...");
+      $("#sync-message").textContent="Conectando...";
+      const initialRemote=await remoteRead(c);
+      if(testOnly){
+        setSyncState("connected","GitHub conectado");
+        $("#sync-message").textContent="Conexão e leitura funcionando.";
+        toast("Conexão com o GitHub validada.");
+        return;
+      }
+      const legacyKeys={tmdbKey:c.tmdbKey||"",omdbKey:c.omdbKey||""};
+      if((legacyKeys.tmdbKey||legacyKeys.omdbKey)&&!data.settings?.updatedAt){
+        data.settings={apiKeys:legacyKeys,updatedAt:new Date().toISOString()};
+      }
+      const initialMerged=mergeData(data,initialRemote.data);
+      const merged=await writeWithShaRetry(c,initialMerged);
+      data=merged;
+      localStorage.setItem(STORAGE,JSON.stringify(data));
+      const updatedConfig=getConfig();
+      updatedConfig.tmdbKey=data.settings?.apiKeys?.tmdbKey||"";
+      updatedConfig.omdbKey=data.settings?.apiKeys?.omdbKey||"";
+      setConfig(updatedConfig);
+      if($("#tmdb-key"))$("#tmdb-key").value=updatedConfig.tmdbKey;
+      if($("#omdb-key"))$("#omdb-key").value=updatedConfig.omdbKey;
+      render();
+      setSyncState("connected","Sincronizado com GitHub");
+      $("#sync-message").textContent=`Sincronizado em ${new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}.`;
+      toast("Biblioteca sincronizada com o GitHub.");
+    }catch(e){
+      setSyncState("","Falha na sincronização");
+      $("#sync-message").textContent=e.message;
+      toast(e.message);
+    }finally{
+      syncInProgress=false;
+    }
+  }
   function exportData(){const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="minha-colecao-backup.json";a.click();URL.revokeObjectURL(a.href)}
   async function importData(file){try{const parsed=JSON.parse(await file.text());if(!Array.isArray(parsed.items))throw new Error("Arquivo não parece ser um backup válido.");data=mergeData(data,parsed);saveLocal();toast("Backup importado.");}catch(e){toast(e.message)}}
   function events(){
