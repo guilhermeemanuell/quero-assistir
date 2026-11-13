@@ -1,4 +1,4 @@
-const CACHE = "quero-assistir-v15";
+const CACHE = "quero-assistir-v16";
 const ASSETS = [
   "./",
   "./index.html",
@@ -37,37 +37,25 @@ self.addEventListener("fetch", event => {
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
 
-  const appShell = [
-    "./",
-    "./index.html",
-    "./app.js",
-    "./styles.css",
-    "./manifest.webmanifest"
-  ].some(path => new URL(path, self.location.href).pathname === url.pathname);
+  // Estratégia Stale-While-Revalidate: abre instantaneamente do cache local
+  // e atualiza o cache em segundo plano sem travar a tela de abertura.
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    const cached = await cache.match(request);
 
-  if (appShell) {
-    event.respondWith((async () => {
-      try {
-        const response = await fetch(request, { cache: "no-store" });
-        if (response && response.ok) {
-          const cache = await caches.open(CACHE);
-          await cache.put(request, response.clone());
-        }
-        return response;
-      } catch (error) {
-        return (await caches.match(request)) || caches.match("./index.html");
-      }
-    })());
-    return;
-  }
-
-  event.respondWith(caches.match(request).then(cached =>
-    cached || fetch(request).then(response => {
-      if (response.ok) {
-        const copy = response.clone();
-        caches.open(CACHE).then(cache => cache.put(request, copy));
+    const networkFetch = fetch(request, { cache: "no-store" }).then(response => {
+      if (response && response.ok) {
+        cache.put(request, response.clone());
       }
       return response;
-    }).catch(() => caches.match("./index.html"))
-  ));
+    }).catch(() => null);
+
+    if (cached) {
+      event.waitUntil(networkFetch);
+      return cached;
+    }
+
+    const response = await networkFetch;
+    return response || (await cache.match("./index.html"));
+  })());
 });
