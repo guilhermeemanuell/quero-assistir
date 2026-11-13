@@ -1,4 +1,4 @@
-const CACHE = "quero-assistir-v17";
+const CACHE = "quero-assistir-v19";
 const ASSETS = [
   "./",
   "./index.html",
@@ -8,9 +8,6 @@ const ASSETS = [
   "./favicon.ico",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
-  "./icons/icon-maskable-192.png",
-  "./icons/icon-maskable-512.png",
-  "./icons/apple-touch-icon.png",
   "./icons/favicon-32.png"
 ];
 
@@ -40,10 +37,9 @@ self.addEventListener("fetch", event => {
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
 
-    // Se for a abertura do app (navegação), entrega o index.html imediatamente do cache
     const cached = request.mode === "navigate"
       ? (await cache.match("./index.html")) || (await cache.match(request))
-      : await cache.match(request);
+      : await cache.match(request, { ignoreSearch: true });
 
     const networkFetch = fetch(request, { cache: "no-store" }).then(response => {
       if (response && response.ok) {
