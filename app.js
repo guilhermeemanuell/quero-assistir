@@ -388,20 +388,20 @@
   async function importData(file){try{const parsed=JSON.parse(await file.text());if(!Array.isArray(parsed.items))throw new Error("Arquivo não parece ser um backup válido.");data=mergeData(data,parsed);saveLocal();toast("Backup importado.");}catch(e){toast(e.message)}}
 
   function setupSwipeSlider(){
-    const area=$("#library-section");
-    if(!area)return;
+    const area=$("#collection-grid");
+    const emptyArea=$("#empty-state");
     const views=["movie","tv","watched"];
     let startX=0, startY=0, tracking=false;
 
-    area.addEventListener("touchstart",(e)=>{
+    const onStart=(e)=>{
       if(e.touches.length!==1)return;
       if(e.target.closest("input,select,button"))return;
       startX=e.touches[0].clientX;
       startY=e.touches[0].clientY;
       tracking=true;
-    },{passive:true});
+    };
 
-    area.addEventListener("touchend",(e)=>{
+    const onEnd=(e)=>{
       if(!tracking || !e.changedTouches.length)return;
       tracking=false;
       const dx=e.changedTouches[0].clientX - startX;
@@ -413,7 +413,13 @@
         : (currentIdx - 1 + views.length) % views.length;
       activeView=views[nextIdx];
       render();
-    },{passive:true});
+    };
+
+    [area, emptyArea].forEach(el=>{
+      if(!el)return;
+      el.addEventListener("touchstart",onStart,{passive:true});
+      el.addEventListener("touchend",onEnd,{passive:true});
+    });
   }
 
   function events(){
