@@ -10,10 +10,10 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <title>Quero assistir</title>
-  <link rel="manifest" href="./manifest.webmanifest?v=19">
-  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png?v=19">
-  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png?v=19">
-  <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-192.png?v=19">
+  <link rel="manifest" href="./manifest.webmanifest?v=20">
+  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png?v=20">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png?v=20">
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-192.png?v=20">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Manrope:wght@500;600;700;800&display=swap" media="print" onload="this.media='all'">
@@ -51,7 +51,10 @@
       <section class="library-section" id="library-section">
         <div class="section-heading">
           <div><p class="eyebrow" id="library-eyebrow">EXPLORE SUA LISTA</p><h2 id="library-title">Minha biblioteca</h2></div>
-          <button class="primary-button" id="add-open"><span>＋</span> Adicionar título</button>
+          <div class="heading-actions">
+            <button type="button" class="secondary-button" id="random-pick" title="Sortear um título desta lista">🎲 <span class="btn-text-desktop">Escolher para mim</span><span class="btn-text-mobile">Sortear</span></button>
+            <button type="button" class="primary-button" id="add-open"><span>＋</span> Adicionar título</button>
+          </div>
         </div>
 
         <div class="tabs" role="tablist" aria-label="Tipo de conteúdo">
@@ -69,6 +72,8 @@
             <option value="year">Ano (mais recente)</option>
           </select>
         </div>
+
+        <div id="quick-filters" class="quick-filters" hidden aria-label="Filtros rápidos por streaming ou gênero"></div>
 
         <div id="collection-grid" class="collection-grid"></div>
         <div id="empty-state" class="empty-state">
@@ -99,6 +104,7 @@
             <label class="field-label">Ano<input id="manual-year" type="number" min="1888" max="2100" placeholder="2026"></label>
             <label class="field-label">Nota IMDb<input id="manual-imdb" type="number" min="0" max="10" step="0.1" placeholder="Ex.: 8.7"></label>
             <label class="field-label full">URL da capa (opcional)<input id="manual-poster" type="url" placeholder="https://..."></label>
+            <label class="field-label full">Notas / Quem indicou (opcional)<input id="manual-notes" maxlength="240" placeholder="Ex.: Indicação do João · Assistir no fim de semana"></label>
           </div><div class="dialog-actions"><button type="reset" class="secondary-button">Limpar</button><button type="submit" class="primary-button">Adicionar à lista</button></div></form>
         </details>
       </section>
@@ -124,7 +130,7 @@
       </div>
       <div class="settings-section">
         <h3>Busca automática de títulos</h3>
-        <p>TMDB localiza filmes, séries, pôsteres, streamings e produtoras. Ao selecionar um resultado, OMDb consulta a nota IMDb uma única vez.</p>
+        <p>TMDB localiza filmes, séries, pôsteres, streamings, trailers e produtoras. Ao selecionar um resultado, OMDb consulta a nota IMDb.</p>
         <label class="field-label">Chave API do TMDB<input id="tmdb-key" type="password" autocomplete="off" placeholder="Chave de API do TMDB"></label>
         <label class="field-label">Chave API do OMDb (opcional)<input id="omdb-key" type="password" autocomplete="off" placeholder="Chave de API do OMDb"></label>
         <p class="field-hint">As chaves ficam salvas neste dispositivo e são copiadas para o repositório privado quando você sincroniza. O token do GitHub continua exclusivo de cada dispositivo. Sem as chaves, você ainda pode cadastrar títulos manualmente.</p>
@@ -139,10 +145,10 @@
   </dialog>
 
   <dialog id="detail-dialog" class="dialog">
-    <form method="dialog" class="dialog-card detail-card" id="detail-form">
-      <button class="icon-button detail-close close-dialog" aria-label="Fechar">×</button>
+    <div class="dialog-card detail-card" id="detail-form">
+      <button type="button" class="icon-button detail-close close-dialog" aria-label="Fechar">×</button>
       <div id="detail-content"></div>
-    </form>
+    </div>
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
