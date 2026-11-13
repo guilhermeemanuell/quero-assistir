@@ -7,12 +7,25 @@
   const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
   const emptyData = () => ({version:1,items:[],deleted:[],settings:{apiKeys:{tmdbKey:"",omdbKey:""},updatedAt:null},updatedAt:new Date().toISOString()});
 
+  const FALLBACK_LOGOS = {
+    "amazon prime video": "https://image.tmdb.org/t/p/w92/pvske1MyAoymrs5bguRfVqYiM9a.jpg",
+    "netflix": "https://image.tmdb.org/t/p/w92/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg",
+    "disney plus": "https://image.tmdb.org/t/p/w92/97yvRBw1GzX7fXprcF80er19ot.jpg",
+    "max": "https://image.tmdb.org/t/p/w92/fksCUZ9QDWZMUwL2LgMtLckROUN.jpg",
+    "globoplay": "https://image.tmdb.org/t/p/w92/7Cg8esVVXOijXAm1f1vrS7jVjcN.jpg",
+    "apple tv+": "https://image.tmdb.org/t/p/w92/2E03IAZsX4ZaUqM7tXlctEPMGWS.jpg",
+    "paramount+": "https://image.tmdb.org/t/p/w92/h5DcR0J2EESLitnhR8xLG1QymTE.jpg",
+    "crunchyroll": "https://image.tmdb.org/t/p/w92/mXeC4TrcgdU6ltE9bCBCEORwSQR.jpg",
+    "claro tv+": "https://image.tmdb.org/t/p/w92/hR9vWd8hWEVQKD6eOnBneKRFEW3.jpg",
+    "mubi": "https://image.tmdb.org/t/p/w92/bVR4Z1LCHY7gidXAJF5pMa4QrDS.jpg"
+  };
+
   let data = loadLocal();
   let activeView = "movie"; // "movie" | "tv" | "watched"
   let activeQuickFilter = null; // { type: "provider" | "genre", value: string }
   let selectedSearch = new Map();
   let toastTimer;
-  let lastDeleted = null; // { item, index, deletedEntryId }
+  let lastDeleted = null; // { item, index }
   let syncInProgress = false;
   let syncTimer;
   let searchBatchId = 0;
@@ -85,20 +98,64 @@
 
   function setSyncState(state,label){const el=$("#sync-indicator");el.className="sync-indicator "+state;el.querySelector("span").textContent=label}
   function posterUrl(path){return path?`https://image.tmdb.org/t/p/w500${path}`:""}
-  function logoUrl(path){return path?`https://image.tmdb.org/t/p/w92${path}`:""}
+  function logoUrl(path){
+    if(!path)return "";
+    const str=String(path).trim();
+    if(!str)return "";
+    if(str.startsWith("http://")||str.startsWith("https://"))return str;
+    return `https://image.tmdb.org/t/p/w92${str.startsWith("/")?str:`/${str}`}`;
+  }
+
+  function cleanProviderName(rawName=""){
+    let name=String(rawName||"").trim();
+    if(!name)return "";
+    if(/amazon\s+channel/i.test(name) || /prime\s+video/i.test(name) || /^amazon\s+prime/i.test(name)){
+      return "Amazon Prime Video";
+    }
+    name=name
+      .replace(/\s+(standard|basic)\s+with\s+ads$/i,"")
+      .replace(/\s+with\s+ads$/i,"")
+      .replace(/\s+padrão\s+com\s+anúncios$/i,"")
+      .replace(/\s+com\s+anúncios$/i,"")
+      .trim();
+    if(/^netflix/i.test(name))return "Netflix";
+    if(/^disney\s*\+/i.test(name) || /^disney\s+plus/i.test(name))return "Disney Plus";
+    if(/^hbo\s+max/i.test(name) || /^max$/i.test(name))return "Max";
+    if(/^paramount\s*\+/i.test(name) || /^paramount\s+plus/i.test(name))return "Paramount+";
+    if(/^apple\s+tv\s*\+?/i.test(name))return "Apple TV+";
+    if(/^claro\s*(tv\+|video)/i.test(name))return "Claro tv+";
+    return name;
+  }
 
   function normalizeProviders(providers){
     if(!Array.isArray(providers))return [];
-    const seen=new Set();
-    const out=[];
+    const map=new Map(); // lowerCaseName -> { name, logo, isExact }
     for(const p of providers){
-      const name=typeof p==="string"?p.trim():(p?.name||p?.provider_name||"").trim();
-      if(!name || seen.has(name.toLowerCase()))continue;
-      seen.add(name.toLowerCase());
-      const logo=typeof p==="object" && p!==null ? (p.logo|| (p.logo_path?logoUrl(p.logo_path):"") ) : "";
-      out.push({name, logo});
+      const rawName=typeof p==="string"?p.trim():(p?.name||p?.provider_name||"").trim();
+      const name=cleanProviderName(rawName);
+      if(!name)continue;
+      const key=name.toLowerCase();
+      const rawLogo=typeof p==="object" && p!==null ? (p.logo || p.logo_path || "") : "";
+      const resolvedLogo=logoUrl(rawLogo) || FALLBACK_LOGOS[key] || "";
+      const isExact=rawName.toLowerCase()===key;
+
+      const existing=map.get(key);
+      if(!existing){
+        map.set(key,{name, logo:resolvedLogo, isExact});
+      }else{
+        if((!existing.logo && resolvedLogo) || (isExact && !existing.isExact && resolvedLogo)){
+          existing.logo=resolvedLogo;
+        }
+        if(isExact)existing.isExact=true;
+      }
     }
-    return out;
+    return [...map.values()].map(({name,logo})=>({name,logo:logo||FALLBACK_LOGOS[name.toLowerCase()]||""}));
+  }
+
+  function hasValidProviderLogos(item){
+    if(!Array.isArray(item.providers))return false;
+    if(item.providers.length===0)return Boolean(item.metaCheckedAt);
+    return item.providers.every(p=>typeof p==="object" && p!==null && Boolean(p.logo));
   }
 
   function getBaseViewItems(){
@@ -137,7 +194,6 @@
       }
     }
 
-    // Verifica se o filtro rápido ativo ainda existe na categoria atual
     if(activeQuickFilter){
       const valid = activeQuickFilter.type==="provider"
         ? providerMap.has(activeQuickFilter.value)
@@ -160,7 +216,7 @@
 
     for(const p of providers){
       const isAct=activeQuickFilter?.type==="provider" && activeQuickFilter.value===p.name;
-      const icon=p.logo?`<img src="${escapeHtml(p.logo)}" alt="" class="pill-logo" loading="lazy">`:"";
+      const icon=p.logo?`<img src="${escapeHtml(p.logo)}" alt="" class="pill-logo" loading="lazy" onerror="this.style.display='none'">`:"";
       html+=`<button type="button" class="filter-pill ${isAct?"active":""}" data-filter-type="provider" data-filter-value="${escapeHtml(p.name)}">${icon}<span>${escapeHtml(p.name)}</span><small>${p.count}</small></button>`;
     }
 
@@ -312,7 +368,7 @@
     let html="";
     if(providers.length){
       const badges=providers.map(p=>{
-        const img=p.logo?`<img src="${escapeHtml(p.logo)}" alt="" class="provider-chip-logo" loading="lazy">`:"";
+        const img=p.logo?`<img src="${escapeHtml(p.logo)}" alt="" class="provider-chip-logo" loading="lazy" onerror="this.style.display='none'">`:"";
         return `<span class="provider-chip">${img}<span>${escapeHtml(p.name)}</span></span>`;
       }).join("");
       html+=`<div class="detail-providers-wrap"><span class="detail-provider-label">Onde assistir:</span><div class="provider-chips">${badges}</div></div>`;
@@ -480,9 +536,9 @@
 
   async function loadItemMetadata(item, {force=false}={}){
     if(!item.tmdbId && !force)return;
-    const hasObjectProviders=Array.isArray(item.providers) && item.providers.every(p=>typeof p==="object" && p!==null && "logo" in p);
+    const validLogos=hasValidProviderLogos(item);
     const needsOverview=force || (!item.overview && !item.overviewCheckedAt);
-    const needsMeta=force || !item.metaCheckedAt || !hasObjectProviders;
+    const needsMeta=force || !item.metaCheckedAt || !validLogos;
     if(!needsOverview && !needsMeta)return;
 
     const cfg=getConfig(),tmdbKey=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey,omdbKey=cfg.omdbKey||data.settings?.apiKeys?.omdbKey;
@@ -497,7 +553,6 @@
 
     try{
       let tmdbId=item.tmdbId;
-      // Se o título foi cadastrado manualmente sem tmdbId e o usuário pediu Atualizar Dados, tenta localizar no TMDB
       if(!tmdbId && force){
         const searchUrl=`https://api.themoviedb.org/3/search/${item.kind}?api_key=${encodeURIComponent(tmdbKey)}&language=pt-BR&query=${encodeURIComponent(item.title)}&include_adult=false`;
         const sRes=await fetch(searchUrl);
@@ -560,8 +615,7 @@
     if(!item)return;
     renderDetail(item);
     if(!$("#detail-dialog").open)$("#detail-dialog").showModal();
-    const hasObjectProviders=Array.isArray(item.providers) && item.providers.every(p=>typeof p==="object" && p!==null && "logo" in p);
-    if((!item.overview && !item.overviewCheckedAt) || !item.metaCheckedAt || !hasObjectProviders){
+    if((!item.overview && !item.overviewCheckedAt) || !item.metaCheckedAt || !hasValidProviderLogos(item)){
       loadItemMetadata(item);
     }
   }
