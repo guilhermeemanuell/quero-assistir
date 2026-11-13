@@ -1,4 +1,4 @@
-const CACHE = "quero-assistir-v16";
+const CACHE = "quero-assistir-v17";
 const ASSETS = [
   "./",
   "./index.html",
@@ -37,15 +37,20 @@ self.addEventListener("fetch", event => {
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
 
-  // Estratégia Stale-While-Revalidate: abre instantaneamente do cache local
-  // e atualiza o cache em segundo plano sem travar a tela de abertura.
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
-    const cached = await cache.match(request);
+
+    // Se for a abertura do app (navegação), entrega o index.html imediatamente do cache
+    const cached = request.mode === "navigate"
+      ? (await cache.match("./index.html")) || (await cache.match(request))
+      : await cache.match(request);
 
     const networkFetch = fetch(request, { cache: "no-store" }).then(response => {
       if (response && response.ok) {
         cache.put(request, response.clone());
+        if (request.mode === "navigate") {
+          cache.put("./index.html", response.clone());
+        }
       }
       return response;
     }).catch(() => null);
