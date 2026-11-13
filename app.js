@@ -11,6 +11,7 @@
   let toastTimer;
   let syncInProgress = false;
   let syncTimer;
+  let searchBatchId = 0;
 
   function loadLocal(){try{const stored=JSON.parse(localStorage.getItem(STORAGE)||"{}");return {...emptyData(),...stored,settings:{...emptyData().settings,...(stored.settings||{}),apiKeys:{...emptyData().settings.apiKeys,...(stored.settings?.apiKeys||{})}}}}catch{return emptyData()}}
   function saveLocal(){data.updatedAt=new Date().toISOString();localStorage.setItem(STORAGE,JSON.stringify(data));render();const c=getConfig();if(c.owner&&c.repo&&c.token){clearTimeout(syncTimer);syncTimer=setTimeout(()=>syncGitHub(false),1800)}}
@@ -222,27 +223,136 @@
     if($("#detail-dialog").open)openDetail(id);
   }
 
-  async function searchTitles(){const cfg=getConfig(),key=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey,query=$("#title-search").value.trim();$("#add-error").textContent="";$("#search-results").innerHTML="";
-    if(!query){$("#add-error").textContent="Digite o nome de um título.";return}if(!key){$("#add-error").textContent="Configure sua chave API do TMDB em Ajustes ou use o cadastro manual.";return}
+  async function tmdbExternalId(key,kind,id){try{const r=await fetch(`https://api.themoviedb.org/3/${kind}/${id}/external_ids?api_key=${encodeURIComponent(key)}`);if(!r.ok)return "";const j=await r.json();return j.imdb_id||""}catch{return""}}
+
+  async function fetchImdbRatingForItem(item, tmdbKey, omdbKey){
+    if(item.imdbCheckedAt || !tmdbKey || !omdbKey || !item.tmdbId)return false;
+    try{
+      const imdbId=item.imdbId || await tmdbExternalId(tmdbKey,item.kind,item.tmdbId);
+      item.imdbId=imdbId||"";
+      if(imdbId){
+        const res=await fetch(`https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${encodeURIComponent(omdbKey)}`);
+        if(res.ok){
+          const omdb=await res.json();
+          if(omdb.Response==="True" && omdb.imdbRating && omdb.imdbRating!=="N/A"){
+            item.imdb=omdb.imdbRating;
+            item.imdbSource="OMDb";
+          }
+        }
+      }
+      item.imdbCheckedAt=new Date().toISOString();
+      return true;
+    }catch{
+      return false;
+    }
+  }
+
+  async function enrichSearchImdbRatings(results, batchId){
+    const cfg=getConfig();
+    const tmdbKey=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey;
+    const omdbKey=cfg.omdbKey||data.settings?.apiKeys?.omdbKey;
+    if(!tmdbKey || !omdbKey)return;
+    const subset=results.slice(0,18);
+    await Promise.allSettled(subset.map(async (r,idx)=>{
+      const updated=await fetchImdbRatingForItem(r,tmdbKey,omdbKey);
+      if(!updated || batchId!==searchBatchId)return;
+      const badgeEl=$(`[data-search-imdb="${idx}"]`);
+      if(badgeEl){
+        badgeEl.innerHTML=`<b>IMDb</b> ★ ${r.imdb?Number(r.imdb).toFixed(1):"—"}`;
+      }
+    }));
+  }
+
+  async function searchTitles(){
+    const cfg=getConfig(),key=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey,query=$("#title-search").value.trim();
+    $("#add-error").textContent="";$("#search-results").innerHTML="";
+    if(!query){$("#add-error").textContent="Digite o nome de um título.";return}
+    if(!key){$("#add-error").textContent="Configure sua chave API do TMDB em Ajustes ou use o cadastro manual.";return}
     $("#search-title-button").disabled=true;$("#search-title-button").textContent="Buscando...";
+    const currentBatch=++searchBatchId;
     try{
       const endpoints=["movie","tv"];
       const responses=await Promise.all(endpoints.map(async endpoint=>{const url=`https://api.themoviedb.org/3/search/${endpoint}?api_key=${encodeURIComponent(key)}&language=pt-BR&query=${encodeURIComponent(query)}&include_adult=false`;const res=await fetch(url);if(!res.ok)throw new Error(res.status===401?"Chave TMDB inválida.":"Não foi possível consultar o TMDB.");return {kind:endpoint,json:await res.json()}}));
-      const resolved=responses.flatMap(({kind,json})=>(json.results||[]).map(r=>({kind,title:kind==="movie"?(r.title||r.original_title):(r.name||r.original_name),year:(r.release_date||r.first_air_date||"").slice(0,4),poster:posterUrl(r.poster_path),imdb:"",imdbId:"",tmdbId:r.id,overview:r.overview||"",overviewLanguage:r.overview?"pt-BR":"",providers:[],studio:"",popularity:Number(r.popularity)||0}))).filter(r=>r.title).sort((a,b)=>b.popularity-a.popularity);
+      const resolved=responses.flatMap(({kind,json})=>(json.results||[]).map(r=>{
+        const vote=Number(r.vote_average)||0;
+        return {
+          kind,
+          title:kind==="movie"?(r.title||r.original_title):(r.name||r.original_name),
+          year:(r.release_date||r.first_air_date||"").slice(0,4),
+          poster:posterUrl(r.poster_path),
+          imdb:vote>0?vote.toFixed(1):"",
+          imdbId:"",
+          imdbCheckedAt:null,
+          imdbSource:vote>0?"TMDB":"",
+          tmdbId:r.id,
+          overview:r.overview||"",
+          overviewLanguage:r.overview?"pt-BR":"",
+          providers:[],
+          studio:"",
+          popularity:Number(r.popularity)||0
+        };
+      })).filter(r=>r.title).sort((a,b)=>b.popularity-a.popularity);
       if(!resolved.length){$("#search-results").innerHTML='<p class="field-hint">Nenhum resultado encontrado. Tente outro nome ou cadastre manualmente.</p>';return}
-      selectedSearch.clear();$("#search-results")._results=resolved;renderSearchResults();
-    }catch(e){$("#add-error").textContent=e.message||"Erro na busca."}finally{$("#search-title-button").disabled=false;$("#search-title-button").textContent="Buscar"}}
+      selectedSearch.clear();
+      $("#search-results")._results=resolved;
+      renderSearchResults();
+      enrichSearchImdbRatings(resolved,currentBatch);
+    }catch(e){
+      $("#add-error").textContent=e.message||"Erro na busca.";
+    }finally{
+      $("#search-title-button").disabled=false;$("#search-title-button").textContent="Buscar";
+    }
+  }
 
-  async function tmdbExternalId(key,kind,id){try{const r=await fetch(`https://api.themoviedb.org/3/${kind}/${id}/external_ids?api_key=${encodeURIComponent(key)}`);if(!r.ok)return "";const j=await r.json();return j.imdb_id||""}catch{return""}}
   function searchKey(item){return `${item.kind}:${item.tmdbId}`}
-  function renderSearchResults(){const results=$("#search-results")._results||[];$("#search-results").innerHTML=results.map((r,i)=>{const key=searchKey(r),chosen=selectedSearch.has(key),exists=isAlreadyAdded(r);const poster=r.poster?`<img class="poster" src="${escapeHtml(r.poster)}" alt="Pôster de ${escapeHtml(r.title)}" loading="lazy" onerror="this.style.display='none'">`:`<div class="poster-placeholder">${escapeHtml(r.title.slice(0,1).toUpperCase())}</div>`;return `<article class="media-card search-result-card ${chosen?"selected":""} ${exists?"already-added":""}"><div class="poster-wrap search-poster-wrap" data-search-open="${i}" role="button" tabindex="0" aria-label="Ver sinopse de ${escapeHtml(r.title)}">${poster}<span class="imdb-badge"><b>${r.kind==="movie"?"FILME":"SÉRIE"}</b> ${r.year||"—"}</span><button type="button" class="search-select ${chosen?"selected":""} ${exists?"disabled":""}" data-result="${i}" aria-pressed="${chosen}" ${exists?"disabled":""}>${exists?"✓ Já adicionado":chosen?"✓ Selecionado":"＋ Selecionar"}</button><span class="search-poster-hint">⌕ Ver sinopse</span></div><div class="media-title" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</div><div class="media-meta">${r.year||"Ano não informado"} · ${r.kind==="movie"?"Filme":"Série"}${exists?" · Já na biblioteca":""}</div></article>`}).join("");$("#selected-count").textContent=`${selectedSearch.size} selecionado(s)`;$("#add-selected").disabled=selectedSearch.size===0;$("#selection-bar").hidden=results.length===0;}
-  function toggleSearchResult(index){const result=$("#search-results")._results?.[index];if(!result||isAlreadyAdded(result))return;const key=searchKey(result);if(selectedSearch.has(key))selectedSearch.delete(key);else selectedSearch.set(key,result);renderSearchResults();}
-  async function addSelectedResults(){if(!selectedSearch.size)return;const button=$("#add-selected"),selected=[...selectedSearch.values()];button.disabled=true;button.textContent="Adicionando…";let added=0,skipped=0;const cfg=getConfig(),tmdbKey=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey,omdbKey=cfg.omdbKey||data.settings?.apiKeys?.omdbKey;
-    try{for(const result of selected){let imdbId="",imdb="",checkedAt=null;try{if(omdbKey&&tmdbKey){imdbId=await tmdbExternalId(tmdbKey,result.kind,result.tmdbId);if(imdbId){const response=await fetch(`https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${encodeURIComponent(omdbKey)}`);if(response.ok){const omdb=await response.json();if(omdb.Response==="True"&&omdb.imdbRating&&omdb.imdbRating!=="N/A")imdb=omdb.imdbRating;checkedAt=new Date().toISOString()}}}}catch{}
-        if(addItem({...result,imdb,imdbId,imdbCheckedAt:checkedAt,imdbSource:imdb?"OMDb":""},{keepDialog:true,silent:true}))added++;else skipped++;}
-      selectedSearch.clear();renderSearchResults();toast(`${added} título(s) adicionado(s)${skipped?`; ${skipped} já estava(m) na biblioteca`:""}.`);
+  function renderSearchResults(){
+    const results=$("#search-results")._results||[];
+    $("#search-results").innerHTML=results.map((r,i)=>{
+      const key=searchKey(r),chosen=selectedSearch.has(key),exists=isAlreadyAdded(r);
+      const poster=r.poster?`<img class="poster" src="${escapeHtml(r.poster)}" alt="Pôster de ${escapeHtml(r.title)}" loading="lazy" onerror="this.style.display='none'">`:`<div class="poster-placeholder">${escapeHtml(r.title.slice(0,1).toUpperCase())}</div>`;
+      const ratingText=r.imdb?Number(r.imdb).toFixed(1):"—";
+      return `<article class="media-card search-result-card ${chosen?"selected":""} ${exists?"already-added":""}"><div class="poster-wrap search-poster-wrap" data-search-open="${i}" role="button" tabindex="0" aria-label="Ver sinopse de ${escapeHtml(r.title)}">${poster}<span class="imdb-badge"><b>${r.kind==="movie"?"FILME":"SÉRIE"}</b> ${r.year||"—"}</span><span class="search-poster-hint">⌕ Ver sinopse</span><span class="imdb-badge search-imdb-badge" data-search-imdb="${i}"><b>IMDb</b> ★ ${ratingText}</span><button type="button" class="search-select ${chosen?"selected":""} ${exists?"disabled":""}" data-result="${i}" aria-pressed="${chosen}" ${exists?"disabled":""}>${exists?"✓ Já adicionado":chosen?"✓ Selecionado":"＋ Selecionar"}</button></div><div class="media-title" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</div><div class="media-meta">${r.year||"Ano não informado"} · ${r.kind==="movie"?"Filme":"Série"}${exists?" · Já na biblioteca":""}</div></article>`;
+    }).join("");
+    $("#selected-count").textContent=`${selectedSearch.size} selecionado(s)`;
+    $("#add-selected").disabled=selectedSearch.size===0;
+    $("#selection-bar").hidden=results.length===0;
+  }
+
+  function toggleSearchResult(index){
+    const result=$("#search-results")._results?.[index];
+    if(!result||isAlreadyAdded(result))return;
+    const key=searchKey(result);
+    if(selectedSearch.has(key))selectedSearch.delete(key);
+    else selectedSearch.set(key,result);
+    renderSearchResults();
+  }
+
+  async function addSelectedResults(){
+    if(!selectedSearch.size)return;
+    const button=$("#add-selected"),selected=[...selectedSearch.values()];
+    button.disabled=true;button.textContent="Adicionando…";
+    let added=0,skipped=0;
+    const cfg=getConfig(),tmdbKey=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey,omdbKey=cfg.omdbKey||data.settings?.apiKeys?.omdbKey;
+    try{
+      for(const result of selected){
+        await fetchImdbRatingForItem(result,tmdbKey,omdbKey);
+        if(addItem({
+          ...result,
+          imdb:result.imdb||null,
+          imdbId:result.imdbId||"",
+          imdbCheckedAt:result.imdbCheckedAt||null,
+          imdbSource:result.imdbSource||""
+        },{keepDialog:true,silent:true}))added++;
+        else skipped++;
+      }
+      selectedSearch.clear();renderSearchResults();
+      toast(`${added} título(s) adicionado(s)${skipped?`; ${skipped} já estava(m) na biblioteca`:""}.`);
       if(added>0){closeSearchPage();$("#search-results").innerHTML="";$("#selection-bar").hidden=true;$("#manual-form").reset();}
-    }finally{button.disabled=selectedSearch.size===0;button.textContent="Adicionar selecionados";}}
+    }finally{
+      button.disabled=selectedSearch.size===0;button.textContent="Adicionar selecionados";
+    }
+  }
+
   function openAdd(){selectedSearch.clear();$("#add-error").textContent="";$("#search-results").innerHTML="";$("#search-results")._results=[];$("#selection-bar").hidden=true;$("#add-selected").disabled=true;$("#add-selected").textContent="Adicionar selecionados";$("#manual-section").open=false;document.body.classList.add("search-page-active");$("#search-page").hidden=false;$("#library-section").hidden=true;$(".hero").hidden=true;$(".stats").hidden=true;$("#title-search").focus()}
   function closeSearchPage(){document.body.classList.remove("search-page-active");$("#search-page").hidden=true;$("#library-section").hidden=false;$(".hero").hidden=false;$(".stats").hidden=false;selectedSearch.clear();render()}
 
@@ -253,28 +363,48 @@
       const poster=item.poster?`<img class="detail-poster" src="${escapeHtml(item.poster)}" alt="Pôster de ${escapeHtml(item.title)}">`:`<div class="detail-poster poster-placeholder">${escapeHtml(item.title[0]||"?")}</div>`;
       const synopsisText=item.overview||(item.metaCheckedAt?"Sinopse não disponível.":"Carregando sinopse…");
       const langNote=item.overview&&item.overviewLanguage&&item.overviewLanguage!=="pt-BR"?'<small class="synopsis-note">Disponível em inglês no TMDB; não há tradução PT-BR cadastrada.</small>':"";
-      $("#detail-content").innerHTML=`<div class="detail-layout">${poster}<div class="detail-info"><p class="eyebrow">${item.kind==="movie"?"FILME":"SÉRIE"}</p><h2>${escapeHtml(item.title)}</h2><p>${item.year||"Ano não informado"}</p>${renderWhereToWatch(item)}</div></div><section class="detail-synopsis"><h3>Sinopse</h3><p class="${item.overview?"":"synopsis-muted"}">${escapeHtml(synopsisText)}</p>${langNote}</section>`;
+      const imdbRating=item.imdb?`★ IMDb ${Number(item.imdb).toFixed(1)}`:"★ IMDb Sem nota";
+      $("#detail-content").innerHTML=`<div class="detail-layout">${poster}<div class="detail-info"><p class="eyebrow">${item.kind==="movie"?"FILME":"SÉRIE"}</p><h2>${escapeHtml(item.title)}</h2><p>${item.year||"Ano não informado"}</p>${renderWhereToWatch(item)}<div class="detail-rating">${imdbRating}</div></div></div><section class="detail-synopsis"><h3>Sinopse</h3><p class="${item.overview?"":"synopsis-muted"}">${escapeHtml(synopsisText)}</p>${langNote}</section>`;
     };
     renderSearchPreview();
     $("#detail-dialog").showModal();
-    if(item.metaCheckedAt)return;
-    const cfg=getConfig(),key=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey;
-    if(!key){
+
+    const cfg=getConfig();
+    const tmdbKey=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey;
+    const omdbKey=cfg.omdbKey||data.settings?.apiKeys?.omdbKey;
+
+    if(!tmdbKey){
       item.metaCheckedAt=new Date().toISOString();
       if(!item.overview)item.overview="Configure sua chave API do TMDB em Ajustes para carregar a sinopse.";
       renderSearchPreview();
       return;
     }
+
     try{
-      const meta=await fetchTmdbMetadata(key,item.kind,item.tmdbId);
-      if(!item.overview && meta.overview){
-        item.overview=meta.overview;
-        item.overviewLanguage=meta.language;
+      const tasks=[];
+      if(!item.metaCheckedAt){
+        tasks.push(fetchTmdbMetadata(tmdbKey,item.kind,item.tmdbId).then(meta=>{
+          if(!item.overview && meta.overview){
+            item.overview=meta.overview;
+            item.overviewLanguage=meta.language;
+          }
+          item.providers=meta.providers||[];
+          item.studio=meta.studio||"";
+          item.metaCheckedAt=new Date().toISOString();
+        }));
       }
-      item.providers=meta.providers||[];
-      item.studio=meta.studio||"";
-      item.metaCheckedAt=new Date().toISOString();
-      if($("#detail-dialog").open)renderSearchPreview();
+      if(!item.imdbCheckedAt && omdbKey){
+        tasks.push(fetchImdbRatingForItem(item,tmdbKey,omdbKey).then(()=>{
+          const badgeEl=$(`[data-search-imdb="${index}"]`);
+          if(badgeEl){
+            badgeEl.innerHTML=`<b>IMDb</b> ★ ${item.imdb?Number(item.imdb).toFixed(1):"—"}`;
+          }
+        }));
+      }
+      if(tasks.length){
+        await Promise.allSettled(tasks);
+        if($("#detail-dialog").open)renderSearchPreview();
+      }
     }catch{
       item.metaCheckedAt=new Date().toISOString();
       if($("#detail-dialog").open)renderSearchPreview();
