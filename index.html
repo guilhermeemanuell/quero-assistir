@@ -47,7 +47,7 @@
 
       <section class="library-section" id="library-section">
         <div class="section-heading">
-          <div><p class="eyebrow">EXPLORE SUA LISTA</p><h2>Minha biblioteca</h2></div>
+          <div><p class="eyebrow" id="library-eyebrow">EXPLORE SUA LISTA</p><h2 id="library-title">Minha biblioteca</h2></div>
           <button class="primary-button" id="add-open"><span>＋</span> Adicionar título</button>
         </div>
 
@@ -56,13 +56,8 @@
           <button class="tab" data-kind="tv" role="tab" aria-selected="false">▤ Séries <span id="tab-tv-count">0</span></button>
         </div>
 
-        <div class="toolbar">
+        <div class="toolbar toolbar-two">
           <label class="search-box"><span>⌕</span><input id="search-input" type="search" placeholder="Buscar na sua coleção..." autocomplete="off"></label>
-          <select id="status-filter" aria-label="Filtrar por status">
-            <option value="all">Todos os títulos</option>
-            <option value="pending">Quero assistir</option>
-            <option value="watched">Já assisti</option>
-          </select>
           <select id="sort-select" aria-label="Ordenar títulos">
             <option value="added">Adicionados recentemente</option>
             <option value="title">Nome (A–Z)</option>
@@ -75,40 +70,39 @@
         <div id="collection-grid" class="collection-grid"></div>
         <div id="empty-state" class="empty-state">
           <div class="empty-art">✧</div>
-          <h3>Sua próxima maratona começa aqui</h3>
-          <p>Adicione filmes e séries que você quer assistir. Eles ficarão organizados nesta biblioteca.</p>
+          <h3 id="empty-title">Sua próxima maratona começa aqui</h3>
+          <p id="empty-copy">Adicione filmes e séries que você quer assistir. Eles ficarão organizados nesta biblioteca.</p>
           <button class="primary-button" id="empty-add">＋ Adicionar primeiro título</button>
         </div>
       </section>
-  <section id="search-page" class="search-page" hidden>
-    <div class="search-page-heading">
-      <button type="button" class="secondary-button" id="search-back">← Voltar à biblioteca</button>
-      <div><p class="eyebrow">ADICIONAR À BIBLIOTECA</p><h1>Buscar filmes e séries</h1><p class="field-hint">Selecione quantos títulos quiser. Clique na capa para consultar a sinopse.</p></div>
-    </div>
-    <div class="search-page-controls">
-      <label class="field-label" for="title-search">Nome do filme ou série</label>
-      <div class="search-row"><input id="title-search" type="search" placeholder="Ex.: Interestelar" autocomplete="off"><button type="button" class="primary-button" id="search-title-button">Buscar</button></div>
-      <p class="field-hint">A busca consulta filmes e séries simultaneamente. Configure sua chave TMDB em Ajustes.</p>
-    </div>
-    <p id="add-error" class="error-message" role="alert"></p>
-    <div id="search-results" class="collection-grid search-collection-grid"></div>
-    <div id="selection-bar" class="selection-bar" hidden><span id="selected-count">0 selecionado(s)</span><button type="button" class="primary-button" id="add-selected" disabled>Adicionar selecionados</button></div>
-    <details class="manual-section" id="manual-section"><summary><span class="manual-chevron" aria-hidden="true">⌄</span><span>Cadastre manualmente</span><small>Preencher os dados do título</small></summary>
-      <form id="manual-form" class="manual-content"><div class="form-grid">
-        <label class="field-label full">Tipo de título<select id="manual-kind"><option value="movie">Filme</option><option value="tv">Série</option></select></label>
-        <label class="field-label full">Título<input id="manual-title" required maxlength="140" placeholder="Nome do filme ou série"></label>
-        <label class="field-label">Ano<input id="manual-year" type="number" min="1888" max="2100" placeholder="2026"></label>
-        <label class="field-label">Nota IMDb<input id="manual-imdb" type="number" min="0" max="10" step="0.1" placeholder="Ex.: 8.7"></label>
-        <label class="field-label full">URL da capa (opcional)<input id="manual-poster" type="url" placeholder="https://..."></label>
-      </div><div class="dialog-actions"><button type="reset" class="secondary-button">Limpar</button><button type="submit" class="primary-button">Adicionar à lista</button></div></form>
-    </details>
-  </section>
 
+      <section id="search-page" class="search-page" hidden>
+        <div class="search-page-heading">
+          <button type="button" class="secondary-button" id="search-back">← Voltar à biblioteca</button>
+          <div><p class="eyebrow">ADICIONAR À BIBLIOTECA</p><h1>Buscar filmes e séries</h1><p class="field-hint">Selecione quantos títulos quiser. Clique na capa para consultar a sinopse.</p></div>
+        </div>
+        <div class="search-page-controls">
+          <label class="field-label" for="title-search">Nome do filme ou série</label>
+          <div class="search-row"><input id="title-search" type="search" placeholder="Ex.: Interestelar" autocomplete="off"><button type="button" class="primary-button" id="search-title-button">Buscar</button></div>
+          <p class="field-hint">A busca consulta filmes e séries simultaneamente. Configure sua chave TMDB em Ajustes.</p>
+        </div>
+        <p id="add-error" class="error-message" role="alert"></p>
+        <div id="search-results" class="collection-grid search-collection-grid"></div>
+        <div id="selection-bar" class="selection-bar" hidden><span id="selected-count">0 selecionado(s)</span><button type="button" class="primary-button" id="add-selected" disabled>Adicionar selecionados</button></div>
+        <details class="manual-section" id="manual-section"><summary><span class="manual-chevron" aria-hidden="true">⌄</span><span>Cadastre manualmente</span><small>Preencher os dados do título</small></summary>
+          <form id="manual-form" class="manual-content"><div class="form-grid">
+            <label class="field-label full">Tipo de título<select id="manual-kind"><option value="movie">Filme</option><option value="tv">Série</option></select></label>
+            <label class="field-label full">Título<input id="manual-title" required maxlength="140" placeholder="Nome do filme ou série"></label>
+            <label class="field-label">Ano<input id="manual-year" type="number" min="1888" max="2100" placeholder="2026"></label>
+            <label class="field-label">Nota IMDb<input id="manual-imdb" type="number" min="0" max="10" step="0.1" placeholder="Ex.: 8.7"></label>
+            <label class="field-label full">URL da capa (opcional)<input id="manual-poster" type="url" placeholder="https://..."></label>
+          </div><div class="dialog-actions"><button type="reset" class="secondary-button">Limpar</button><button type="submit" class="primary-button">Adicionar à lista</button></div></form>
+        </details>
+      </section>
     </main>
 
     <footer><span>QUERO ASSISTIR</span><span>Feito para organizar suas próximas histórias.</span></footer>
   </div>
-
 
   <dialog id="settings-dialog" class="dialog">
     <form method="dialog" class="dialog-card settings-card" id="settings-form">
@@ -127,7 +121,7 @@
       </div>
       <div class="settings-section">
         <h3>Busca automática de títulos</h3>
-        <p>TMDB localiza filmes, séries e pôsteres. Ao selecionar um resultado, OMDb consulta a nota IMDb uma única vez; a nota e o identificador são salvos no título.</p>
+        <p>TMDB localiza filmes, séries, pôsteres, streamings e produtoras. Ao selecionar um resultado, OMDb consulta a nota IMDb uma única vez.</p>
         <label class="field-label">Chave API do TMDB<input id="tmdb-key" type="password" autocomplete="off" placeholder="Chave de API do TMDB"></label>
         <label class="field-label">Chave API do OMDb (opcional)<input id="omdb-key" type="password" autocomplete="off" placeholder="Chave de API do OMDb"></label>
         <p class="field-hint">As chaves ficam salvas neste dispositivo e são copiadas para o repositório privado quando você sincroniza. O token do GitHub continua exclusivo de cada dispositivo. Sem as chaves, você ainda pode cadastrar títulos manualmente.</p>

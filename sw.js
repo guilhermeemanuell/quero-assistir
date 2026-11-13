@@ -1,4 +1,4 @@
-const CACHE = "quero-assistir-v12";
+const CACHE = "quero-assistir-v13";
 const ASSETS = [
   "./",
   "./index.html",
