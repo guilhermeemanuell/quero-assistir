@@ -636,9 +636,7 @@
   async function fetchOpenLibrarySynopsis(item){
     if(!item.openLibKey || item.overview)return;
     try{
-      const res=await fetch(`https://openlibrary.org${item.openLibKey}.json`);
-      if(!res.ok)return;
-      const json=await res.json();
+      const json=await fetchJsonTimeout(`https://openlibrary.org${item.openLibKey}.json`,8000);
       const desc=typeof json.description==="string"?json.description:(json.description?.value||"");
       if(desc){
         item.overview=desc;
@@ -922,82 +920,89 @@
     };
   }
 
-  async function fetchGoogleBooksDirect(query){
+  // fetch com tempo limite: evita que uma API lenta trave a busca inteira
+  async function fetchJsonTimeout(url, ms=8000){
+    const ctrl=new AbortController();
+    const timer=setTimeout(()=>ctrl.abort(),ms);
     try{
-      const cfg=getConfig();
-      const gKey=cfg.gbooksKey||data.settings?.apiKeys?.gbooksKey||"";
-      const keyParam=gKey?`&key=${encodeURIComponent(gKey)}`:"";
-      // Busca direta no índice do Google Books (aceita termos em português ou inglês, livros e coletâneas)
-      const url=`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=24&printType=books&orderBy=relevance${keyParam}`;
-      const res=await fetch(url);
-      if(!res.ok)return [];
-      const json=await res.json();
-      return (json.items||[]).map((vol,idx)=>parseGoogleBook(vol,idx)).filter(b=>b.title);
-    }catch{
-      return [];
+      const res=await fetch(url,{signal:ctrl.signal});
+      if(!res.ok){const err=new Error(`HTTP ${res.status}`);err.status=res.status;throw err}
+      return await res.json();
+    }finally{
+      clearTimeout(timer);
     }
+  }
+
+  // Retorna {items, failed}. "failed" diferencia erro de rede/limite de "nenhum resultado".
+  async function fetchGoogleBooksDirect(query){
+    const cfg=getConfig();
+    const gKey=cfg.gbooksKey||data.settings?.apiKeys?.gbooksKey||"";
+    const base=`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=24&printType=books&orderBy=relevance`;
+    const attempts=gKey?[`${base}&key=${encodeURIComponent(gKey)}`,base]:[base];
+    for(const url of attempts){
+      try{
+        const json=await fetchJsonTimeout(url,8000);
+        return {items:(json.items||[]).map((vol,idx)=>parseGoogleBook(vol,idx)).filter(b=>b.title),failed:false};
+      }catch(e){
+        // chave inválida (400/403): tenta sem a chave; demais erros: segue para o fallback
+        if(!(e.status===400||e.status===403))break;
+      }
+    }
+    return {items:[],failed:true};
   }
 
   async function searchOpenLibrary(query){
     try{
       const url=`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=15&fields=key,title,author_name,first_publish_year,cover_i,ratings_average,publisher,subject,first_sentence`;
-      const res=await fetch(url);
-      if(!res.ok)return [];
-      const json=await res.json();
-      return (json.docs||[]).map(parseOpenLibraryDoc).filter(b=>b.title);
+      const json=await fetchJsonTimeout(url,8000);
+      return {items:(json.docs||[]).map(parseOpenLibraryDoc).filter(b=>b.title),failed:false};
     }catch{
-      return [];
+      return {items:[],failed:true};
     }
   }
 
-  async function searchBooksOnly(query){
-    const [gbList, olList]=await Promise.all([
-      fetchGoogleBooksDirect(query),
-      searchOpenLibrary(query)
-    ]);
-
+  function mergeBookLists(gbList, olList){
     const merged=[];
     const byKey=new Map();
-
-    // 1) Preserva rigorosamente a ordem direta retornada pelo Google (o 1º resultado do Google fica em 1º)
-    for(const item of gbList){
+    const fill=(existing,item)=>{
+      if(!existing.poster && item.poster)existing.poster=item.poster;
+      if(!existing.overview && item.overview){
+        existing.overview=item.overview;
+        existing.overviewLanguage=item.overviewLanguage;
+      }
+      if(!existing.imdb && item.imdb)existing.imdb=item.imdb;
+      if(!existing.year && item.year)existing.year=item.year;
+      if(!existing.studio && item.studio)existing.studio=item.studio;
+      if(!existing.openLibKey && item.openLibKey)existing.openLibKey=item.openLibKey;
+    };
+    // Ordem do Google primeiro; Open Library complementa capas/sinopses e adiciona o que faltar
+    for(const item of [...gbList,...olList]){
       const key=normBookKey(item.baseTitle||item.title, item.author);
-      if(!byKey.has(key)){
-        byKey.set(key, item);
-        merged.push(item);
-      }else{
-        const existing=byKey.get(key);
-        if(!existing.poster && item.poster)existing.poster=item.poster;
-        if(!existing.overview && item.overview){
-          existing.overview=item.overview;
-          existing.overviewLanguage=item.overviewLanguage;
-        }
-        if(!existing.imdb && item.imdb)existing.imdb=item.imdb;
-        if(!existing.year && item.year)existing.year=item.year;
-        if(!existing.studio && item.studio)existing.studio=item.studio;
-      }
-    }
-
-    // 2) Usa a Open Library para preencher capas faltantes nos resultados do Google e complementar resultados
-    for(const olItem of olList){
-      const key=normBookKey(olItem.baseTitle||olItem.title, olItem.author);
       const existing=byKey.get(key);
-      if(existing){
-        if(!existing.poster && olItem.poster)existing.poster=olItem.poster;
-        if(!existing.overview && olItem.overview){
-          existing.overview=olItem.overview;
-          existing.overviewLanguage=olItem.overviewLanguage;
-        }
-        if(!existing.imdb && olItem.imdb)existing.imdb=olItem.imdb;
-        if(!existing.year && olItem.year)existing.year=olItem.year;
-        if(!existing.openLibKey && olItem.openLibKey)existing.openLibKey=olItem.openLibKey;
-      }else{
-        byKey.set(key, olItem);
-        merged.push(olItem);
-      }
+      if(existing)fill(existing,item);
+      else{byKey.set(key,item);merged.push(item)}
     }
-
     return merged.slice(0,24);
+  }
+
+  // onPartial(lista) é chamado assim que a primeira fonte responde, sem esperar a mais lenta.
+  async function searchBooksOnly(query, onPartial){
+    let gb={items:[],failed:false},ol={items:[],failed:false},gbDone=false,olDone=false;
+    const notify=()=>{
+      if(onPartial&&(gbDone||olDone)){
+        const list=mergeBookLists(gb.items,ol.items);
+        if(list.length)onPartial(list);
+      }
+    };
+    await Promise.all([
+      fetchGoogleBooksDirect(query).then(r=>{gb=r;gbDone=true;notify()}),
+      searchOpenLibrary(query).then(r=>{ol=r;olDone=true;notify()})
+    ]);
+    const list=mergeBookLists(gb.items,ol.items);
+    if(!list.length && gb.failed && ol.failed){
+      throw new Error("Não foi possível consultar as bases de livros agora. Verifique sua conexão e tente novamente.");
+    }
+    return list;
   }
 
   async function searchTitles(){
@@ -1012,7 +1017,14 @@
       let resolved=[];
 
       if(searchMode==="book"){
-        resolved=await searchBooksOnly(query);
+        resolved=await searchBooksOnly(query,partial=>{
+          // mostra os primeiros resultados assim que chegarem (somente se esta ainda é a busca atual)
+          if(currentBatch!==searchBatchId)return;
+          selectedSearch.clear();
+          $("#search-results")._results=partial;
+          renderSearchResults();
+        });
+        if(currentBatch!==searchBatchId)return;
       }else{
         if(!key){
           $("#add-error").textContent="Configure sua chave API do TMDB em Ajustes ou use o cadastro manual.";
@@ -1057,7 +1069,7 @@
         return;
       }
 
-      selectedSearch.clear();
+      if(searchMode!=="book")selectedSearch.clear(); // em livros, preserva seleção feita durante o carregamento parcial
       $("#search-results")._results=resolved;
       renderSearchResults();
       if(searchMode!=="book"){
