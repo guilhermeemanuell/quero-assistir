@@ -462,16 +462,24 @@
     return `https://www.youtube.com/results?search_query=${q}`;
   }
 
+  let lightboxToken=0;
   function openPosterLightbox(src, alt="Capa ampliada"){
     if(!src)return;
     const dlg=$("#poster-lightbox");
     const img=$("#lightbox-img");
     if(!dlg || !img)return;
-    img.src=highResPosterUrl(src);
+    const token=++lightboxToken;
+    // 1) mostra já a capa pequena (que o navegador tem em cache), sem resquício da anterior
+    img.removeAttribute("srcset");
+    img.src=src;
     img.alt=alt;
-    img.onerror=()=>{
-      if(img.src!==src)img.src=src;
-    };
+    // 2) baixa a versão grande em segundo plano e troca só quando estiver pronta
+    const hi=highResPosterUrl(src);
+    if(hi && hi!==src){
+      const loader=new Image();
+      loader.onload=()=>{if(token===lightboxToken)img.src=hi};
+      loader.src=hi; // se falhar, permanece a capa pequena
+    }
     dlg.showModal();
   }
 
@@ -1560,6 +1568,12 @@
 
     $("#poster-lightbox")?.addEventListener("click",()=>{
       $("#poster-lightbox").close();
+    });
+    // limpa a imagem ao fechar e invalida downloads pendentes (evita mostrar a capa antiga na próxima abertura)
+    $("#poster-lightbox")?.addEventListener("close",()=>{
+      lightboxToken++;
+      const im=$("#lightbox-img");
+      if(im)im.removeAttribute("src");
     });
 
     $$(".tab").forEach(b=>b.onclick=()=>{activeView=b.dataset.kind;activeQuickFilter=null;render()});
