@@ -10,10 +10,10 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <title>Quero assistir</title>
-  <link rel="manifest" href="./manifest.webmanifest?v=24">
-  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png?v=24">
-  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png?v=24">
-  <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-192.png?v=24">
+  <link rel="manifest" href="./manifest.webmanifest?v=25">
+  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png?v=25">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png?v=25">
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-192.png?v=25">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Manrope:wght@500;600;700;800&display=swap" media="print" onload="this.media='all'">
@@ -89,12 +89,16 @@
       <section id="search-page" class="search-page" hidden>
         <div class="search-page-heading">
           <button type="button" class="secondary-button" id="search-back">← Voltar à biblioteca</button>
-          <div><p class="eyebrow">ADICIONAR À BIBLIOTECA</p><h1>Buscar filmes, séries e livros</h1><p class="field-hint">Selecione quantos títulos quiser. Clique na capa para consultar a sinopse.</p></div>
+          <div>
+            <p class="eyebrow" id="search-page-eyebrow">ADICIONAR À BIBLIOTECA</p>
+            <h1 id="search-page-title">Buscar filmes e séries</h1>
+            <p class="field-hint">Selecione quantos títulos quiser. Clique na capa para consultar a sinopse.</p>
+          </div>
         </div>
         <div class="search-page-controls">
-          <label class="field-label" for="title-search">Nome do filme, série ou livro</label>
-          <div class="search-row"><input id="title-search" type="search" placeholder="Ex.: Interestelar ou Duna" autocomplete="off"><button type="button" class="primary-button" id="search-title-button">Buscar</button></div>
-          <p class="field-hint">A busca consulta filmes, séries (TMDB) e livros (Open Library / Google Books) simultaneamente.</p>
+          <label class="field-label" for="title-search" id="search-input-label">Nome do filme ou série</label>
+          <div class="search-row"><input id="title-search" type="search" placeholder="Ex.: Interestelar" autocomplete="off"><button type="button" class="primary-button" id="search-title-button">Buscar</button></div>
+          <p class="field-hint" id="search-mode-hint">A busca consulta filmes e séries simultaneamente. Configure sua chave TMDB em Ajustes.</p>
         </div>
         <p id="add-error" class="error-message" role="alert"></p>
         <div id="search-results" class="collection-grid search-collection-grid"></div>
@@ -132,7 +136,7 @@
       </div>
       <div class="settings-section">
         <h3>Busca automática de títulos</h3>
-        <p>TMDB localiza filmes e séries. Livros são buscados automaticamente via Open Library e Google Books. OMDb consulta a nota IMDb.</p>
+        <p>TMDB localiza filmes e séries. Google Books localiza livros automaticamente. OMDb consulta a nota IMDb.</p>
         <label class="field-label">Chave API do TMDB<input id="tmdb-key" type="password" autocomplete="off" placeholder="Chave de API do TMDB"></label>
         <label class="field-label">Chave API do OMDb (opcional)<input id="omdb-key" type="password" autocomplete="off" placeholder="Chave de API do OMDb"></label>
         <label class="field-label">Chave API do Google Books (opcional)<input id="gbooks-key" type="password" autocomplete="off" placeholder="Chave opcional do Google Cloud Books API"></label>

@@ -23,10 +23,11 @@
 
   let data = loadLocal();
   let activeView = "movie"; // "movie" | "tv" | "watched" | "book"
-  let activeQuickFilter = null; // { type: "provider" | "genre", value: string }
+  let searchMode = "screen"; // "screen" (filmes/séries) | "book" (somente livros)
+  let activeQuickFilter = null;
   let selectedSearch = new Map();
   let toastTimer;
-  let lastDeleted = null; // { item, index }
+  let lastDeleted = null;
   let syncInProgress = false;
   let syncTimer;
   let searchBatchId = 0;
@@ -311,6 +312,11 @@
     $("#library-eyebrow").textContent=isWatched?"HISTÓRICO":isBook?"SUA ESTANTE":"EXPLORE SUA LISTA";
     $("#library-title").textContent=isWatched?"Já assisti":isBook?"Meus livros":"Minha biblioteca";
 
+    const addBtn=$("#add-open");
+    if(addBtn){
+      addBtn.innerHTML=isBook?'<span>＋</span> Adicionar livro':'<span>＋</span> Adicionar título';
+    }
+
     const randomBtn=$("#random-pick");
     if(randomBtn)randomBtn.disabled=list.length===0;
 
@@ -336,10 +342,12 @@
       }else if(isBook){
         $("#empty-title").textContent="Sua próxima leitura começa aqui";
         $("#empty-copy").textContent="Busque e adicione os livros que você deseja ler nesta seção.";
+        $("#empty-add").textContent="＋ Adicionar primeiro livro";
         $("#empty-add").hidden=false;
       }else{
         $("#empty-title").textContent="Sua próxima maratona começa aqui";
-        $("#empty-copy").textContent="Adicione filmes, séries e livros que você quer acompanhar. Eles ficarão organizados nesta biblioteca.";
+        $("#empty-copy").textContent="Adicione filmes e séries que você quer assistir. Eles ficarão organizados nesta biblioteca.";
+        $("#empty-add").textContent="＋ Adicionar primeiro título";
         $("#empty-add").hidden=false;
       }
     }
@@ -641,7 +649,7 @@
 
   async function refreshBookMetadata(item){
     try{
-      const books=await searchAllBookSources(item.title);
+      const books=await searchBooksOnly(item.title);
       const hit=books[0];
       if(!hit){
         if($("#detail-dialog").open)renderDetail(item);
@@ -828,7 +836,7 @@
     const tmdbKey=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey;
     const omdbKey=cfg.omdbKey||data.settings?.apiKeys?.omdbKey;
     if(!tmdbKey || !omdbKey)return;
-    const subset=results.slice(0,22);
+    const subset=results.slice(0,20);
     await Promise.allSettled(subset.map(async (r,idx)=>{
       if(r.kind==="book")return;
       const updated=await fetchImdbRatingForItem(r,tmdbKey,omdbKey);
@@ -907,7 +915,7 @@
       const cfg=getConfig();
       const gKey=cfg.gbooksKey||data.settings?.apiKeys?.gbooksKey||"";
       const keyParam=gKey?`&key=${encodeURIComponent(gKey)}`:"";
-      const url=`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=10${keyParam}`;
+      const url=`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=15${keyParam}`;
       const res=await fetch(url);
       if(!res.ok)return [];
       const json=await res.json();
@@ -919,7 +927,7 @@
 
   async function searchOpenLibrary(query){
     try{
-      const url=`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=10&fields=key,title,author_name,first_publish_year,cover_i,ratings_average,publisher,subject,first_sentence,edition_count`;
+      const url=`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=12&fields=key,title,author_name,first_publish_year,cover_i,ratings_average,publisher,subject,first_sentence,edition_count`;
       const res=await fetch(url);
       if(!res.ok)return [];
       const json=await res.json();
@@ -929,18 +937,19 @@
     }
   }
 
-  async function searchAllBookSources(query){
-    const [gbList, olList]=await Promise.all([
-      searchGoogleBooks(query),
-      searchOpenLibrary(query)
-    ]);
-    const merged=[];
-    const seen=new Set();
-    for(const item of [...gbList, ...olList]){
-      const normKey=`${item.title.toLowerCase().trim()}:${item.author.toLowerCase().split(",")[0].trim()}`;
-      if(seen.has(normKey))continue;
-      seen.add(normKey);
-      merged.push(item);
+  async function searchBooksOnly(query){
+    // Prioriza Google Books; se a cota anônima falhar ou retornar vazio, usa Open Library como fallback imediato
+    const gbList=await searchGoogleBooks(query);
+    if(gbList.length>=3)return gbList;
+    const olList=await searchOpenLibrary(query);
+    const merged=[...gbList];
+    const seen=new Set(gbList.map(b=>`${b.title.toLowerCase().trim()}:${b.author.toLowerCase().split(",")[0].trim()}`));
+    for(const item of olList){
+      const k=`${item.title.toLowerCase().trim()}:${item.author.toLowerCase().split(",")[0].trim()}`;
+      if(!seen.has(k)){
+        seen.add(k);
+        merged.push(item);
+      }
     }
     return merged;
   }
@@ -949,55 +958,54 @@
     const cfg=getConfig(),key=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey,query=$("#title-search").value.trim();
     $("#add-error").textContent="";$("#search-results").innerHTML="";
     if(!query){$("#add-error").textContent="Digite o nome de um título.";return}
+
     $("#search-title-button").disabled=true;$("#search-title-button").textContent="Buscando...";
     const currentBatch=++searchBatchId;
+
     try{
-      const tmdbTasks=key ? ["movie","tv"].map(async endpoint=>{
-        const url=`https://api.themoviedb.org/3/search/${endpoint}?api_key=${encodeURIComponent(key)}&language=pt-BR&query=${encodeURIComponent(query)}&include_adult=false`;
-        const res=await fetch(url);
-        if(!res.ok)throw new Error(res.status===401?"Chave TMDB inválida.":"Não foi possível consultar o TMDB.");
-        return {kind:endpoint,json:await res.json()};
-      }) : [];
+      let resolved=[];
 
-      const [tmdbResponses, booksList]=await Promise.all([
-        Promise.all(tmdbTasks),
-        searchAllBookSources(query)
-      ]);
+      if(searchMode==="book"){
+        // Busca exclusivamente livros (Google Books + fallback Open Library)
+        resolved=await searchBooksOnly(query);
+      }else{
+        // Busca exclusivamente filmes e séries (TMDB)
+        if(!key){
+          $("#add-error").textContent="Configure sua chave API do TMDB em Ajustes ou use o cadastro manual.";
+          return;
+        }
+        const endpoints=["movie","tv"];
+        const responses=await Promise.all(endpoints.map(async endpoint=>{
+          const url=`https://api.themoviedb.org/3/search/${endpoint}?api_key=${encodeURIComponent(key)}&language=pt-BR&query=${encodeURIComponent(query)}&include_adult=false`;
+          const res=await fetch(url);
+          if(!res.ok)throw new Error(res.status===401?"Chave TMDB inválida.":"Não foi possível consultar o TMDB.");
+          return {kind:endpoint,json:await res.json()};
+        }));
 
-      const tmdbResolved=tmdbResponses.flatMap(({kind,json})=>(json.results||[]).map(r=>{
-        const vote=Number(r.vote_average)||0;
-        return {
-          kind,
-          title:kind==="movie"?(r.title||r.original_title):(r.name||r.original_name),
-          author:"",
-          year:(r.release_date||r.first_air_date||"").slice(0,4),
-          poster:posterUrl(r.poster_path),
-          imdb:vote>0?vote.toFixed(1):"",
-          imdbId:"",
-          imdbCheckedAt:null,
-          imdbSource:vote>0?"TMDB":"",
-          tmdbId:r.id,
-          bookId:"",
-          openLibKey:"",
-          overview:r.overview||"",
-          overviewLanguage:r.overview?"pt-BR":"",
-          providers:[],
-          genres:[],
-          trailerUrl:"",
-          studio:"",
-          popularity:Number(r.popularity)||0
-        };
-      })).filter(r=>r.title).sort((a,b)=>b.popularity-a.popularity);
-
-      const resolved=[];
-      const maxLen=Math.max(tmdbResolved.length,booksList.length);
-      for(let i=0;i<maxLen;i++){
-        if(i<tmdbResolved.length)resolved.push(tmdbResolved[i]);
-        if(i<booksList.length)resolved.push(booksList[i]);
-      }
-
-      if(!key && resolved.length){
-        $("#add-error").textContent="Chave TMDB não configurada: exibindo apenas resultados de livros.";
+        resolved=responses.flatMap(({kind,json})=>(json.results||[]).map(r=>{
+          const vote=Number(r.vote_average)||0;
+          return {
+            kind,
+            title:kind==="movie"?(r.title||r.original_title):(r.name||r.original_name),
+            author:"",
+            year:(r.release_date||r.first_air_date||"").slice(0,4),
+            poster:posterUrl(r.poster_path),
+            imdb:vote>0?vote.toFixed(1):"",
+            imdbId:"",
+            imdbCheckedAt:null,
+            imdbSource:vote>0?"TMDB":"",
+            tmdbId:r.id,
+            bookId:"",
+            openLibKey:"",
+            overview:r.overview||"",
+            overviewLanguage:r.overview?"pt-BR":"",
+            providers:[],
+            genres:[],
+            trailerUrl:"",
+            studio:"",
+            popularity:Number(r.popularity)||0
+          };
+        })).filter(r=>r.title).sort((a,b)=>b.popularity-a.popularity);
       }
 
       if(!resolved.length){
@@ -1008,7 +1016,9 @@
       selectedSearch.clear();
       $("#search-results")._results=resolved;
       renderSearchResults();
-      enrichSearchImdbRatings(resolved,currentBatch);
+      if(searchMode!=="book"){
+        enrichSearchImdbRatings(resolved,currentBatch);
+      }
     }catch(e){
       $("#add-error").textContent=e.message||"Erro na busca.";
     }finally{
@@ -1027,10 +1037,21 @@
       const poster=r.poster?`<img class="poster" src="${escapeHtml(r.poster)}" alt="Pôster de ${escapeHtml(r.title)}" loading="lazy" onerror="this.style.display='none'">`:`<div class="poster-placeholder">${escapeHtml(r.title.slice(0,1).toUpperCase())}</div>`;
       const ratingText=r.imdb?Number(r.imdb).toFixed(1):"—";
       const scoreTag=r.kind==="book"?"Aval.":"IMDb";
+      const selectLabel=exists?"✓ Na lista":chosen?"✓ Selecionado":(r.kind==="book"?"＋ Quero ler":"＋ Selecionar");
       const subMeta=r.kind==="book" && r.author
-        ? `${r.year||"Ano n/d"} · Livro · ${r.author}`
+        ? `${r.year||"Ano n/d"} · ${r.author}`
         : `${r.year||"Ano não informado"} · ${kindLabel(r.kind)}${exists?" · Já na biblioteca":""}`;
-      return `<article class="media-card search-result-card ${chosen?"selected":""} ${exists?"already-added":""}"><div class="poster-wrap search-poster-wrap" data-search-open="${i}" role="button" tabindex="0" aria-label="Ver sinopse de ${escapeHtml(r.title)}">${poster}<span class="imdb-badge"><b>${kindEyebrow(r.kind)}</b> ${r.year||"—"}</span><span class="search-poster-hint">⌕ Ver sinopse</span><span class="imdb-badge search-imdb-badge" data-search-imdb="${i}"><b>${scoreTag}</b> ★ ${ratingText}</span><button type="button" class="search-select ${chosen?"selected":""} ${exists?"disabled":""}" data-result="${i}" aria-pressed="${chosen}" ${exists?"disabled":""}>${exists?"✓ Já adicionado":chosen?"✓ Selecionado":"＋ Selecionar"}</button></div><div class="media-title" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</div><div class="media-meta" title="${escapeHtml(subMeta)}">${escapeHtml(subMeta)}</div></article>`;
+      return `<article class="media-card search-result-card ${chosen?"selected":""} ${exists?"already-added":""}">
+        <div class="poster-wrap search-poster-wrap" data-search-open="${i}" role="button" tabindex="0" aria-label="Ver sinopse de ${escapeHtml(r.title)}">
+          ${poster}
+          <span class="imdb-badge"><b>${kindEyebrow(r.kind)}</b> ${r.year||"—"}</span>
+          <span class="search-poster-hint">⌕ Sinopse</span>
+          <span class="imdb-badge search-imdb-badge" data-search-imdb="${i}"><b>${scoreTag}</b> ★ ${ratingText}</span>
+        </div>
+        <div class="media-title" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</div>
+        <div class="media-meta" title="${escapeHtml(subMeta)}">${escapeHtml(subMeta)}</div>
+        <button type="button" class="search-select-btn ${chosen?"selected":""} ${exists?"disabled":""}" data-result="${i}" aria-pressed="${chosen}" ${exists?"disabled":""}>${selectLabel}</button>
+      </article>`;
     }).join("");
     $("#selected-count").textContent=`${selectedSearch.size} selecionado(s)`;
     $("#add-selected").disabled=selectedSearch.size===0;
@@ -1093,6 +1114,7 @@
   }
 
   function openAdd(){
+    searchMode = activeView==="book" ? "book" : "screen";
     selectedSearch.clear();
     $("#add-error").textContent="";
     $("#search-results").innerHTML="";
@@ -1101,9 +1123,23 @@
     $("#add-selected").disabled=true;
     $("#add-selected").textContent="Adicionar selecionados";
     $("#manual-section").open=false;
-    if(["movie","tv","book"].includes(activeView)){
-      $("#manual-kind").value=activeView;
+
+    if(searchMode==="book"){
+      $("#search-page-eyebrow").textContent="ADICIONAR À ESTANTE";
+      $("#search-page-title").textContent="Buscar livros";
+      $("#search-input-label").textContent="Nome do livro ou autor";
+      $("#title-search").placeholder="Ex.: O Hobbit ou Dom Casmurro";
+      $("#search-mode-hint").textContent="A busca consulta exclusivamente livros no Google Books.";
+      $("#manual-kind").value="book";
+    }else{
+      $("#search-page-eyebrow").textContent="ADICIONAR À BIBLIOTECA";
+      $("#search-page-title").textContent="Buscar filmes e séries";
+      $("#search-input-label").textContent="Nome do filme ou série";
+      $("#title-search").placeholder="Ex.: Interestelar";
+      $("#search-mode-hint").textContent="A busca consulta filmes e séries simultaneamente. Configure sua chave TMDB em Ajustes.";
+      $("#manual-kind").value=activeView==="tv"?"tv":"movie";
     }
+
     document.body.classList.add("search-page-active");
     $("#search-page").hidden=false;
     $("#library-section").hidden=true;
