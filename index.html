@@ -10,10 +10,10 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <title>Quero assistir</title>
-  <link rel="manifest" href="./manifest.webmanifest?v=22">
-  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png?v=22">
-  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png?v=22">
-  <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-192.png?v=22">
+  <link rel="manifest" href="./manifest.webmanifest?v=24">
+  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png?v=24">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png?v=24">
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-192.png?v=24">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Manrope:wght@500;600;700;800&display=swap" media="print" onload="this.media='all'">
@@ -94,7 +94,7 @@
         <div class="search-page-controls">
           <label class="field-label" for="title-search">Nome do filme, série ou livro</label>
           <div class="search-row"><input id="title-search" type="search" placeholder="Ex.: Interestelar ou Duna" autocomplete="off"><button type="button" class="primary-button" id="search-title-button">Buscar</button></div>
-          <p class="field-hint">A busca consulta filmes, séries (TMDB) e livros (Google Books) simultaneamente.</p>
+          <p class="field-hint">A busca consulta filmes, séries (TMDB) e livros (Open Library / Google Books) simultaneamente.</p>
         </div>
         <p id="add-error" class="error-message" role="alert"></p>
         <div id="search-results" class="collection-grid search-collection-grid"></div>
@@ -132,10 +132,11 @@
       </div>
       <div class="settings-section">
         <h3>Busca automática de títulos</h3>
-        <p>TMDB localiza filmes, séries, pôsteres, streamings e trailers. Google Books localiza livros automaticamente. OMDb consulta a nota IMDb.</p>
+        <p>TMDB localiza filmes e séries. Livros são buscados automaticamente via Open Library e Google Books. OMDb consulta a nota IMDb.</p>
         <label class="field-label">Chave API do TMDB<input id="tmdb-key" type="password" autocomplete="off" placeholder="Chave de API do TMDB"></label>
         <label class="field-label">Chave API do OMDb (opcional)<input id="omdb-key" type="password" autocomplete="off" placeholder="Chave de API do OMDb"></label>
-        <p class="field-hint">As chaves ficam salvas neste dispositivo e são copiadas para o repositório privado quando você sincroniza. O token do GitHub continua exclusivo de cada dispositivo. Sem as chaves, você ainda pode buscar livros e cadastrar títulos manualmente.</p>
+        <label class="field-label">Chave API do Google Books (opcional)<input id="gbooks-key" type="password" autocomplete="off" placeholder="Chave opcional do Google Cloud Books API"></label>
+        <p class="field-hint">As chaves ficam salvas neste dispositivo e são copiadas para o repositório privado quando você sincroniza. O token do GitHub continua exclusivo de cada dispositivo.</p>
         <button type="button" class="primary-button" id="save-api-keys">Salvar chaves</button>
       </div>
       <div class="settings-section">

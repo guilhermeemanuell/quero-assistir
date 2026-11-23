@@ -6,7 +6,7 @@
   const CONFIG = "minhaColecao.config.v1";
   const SORT_KEY = "minhaColecao.sort.v1";
   const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
-  const emptyData = () => ({version:1,items:[],deleted:[],settings:{apiKeys:{tmdbKey:"",omdbKey:""},updatedAt:null},updatedAt:new Date().toISOString()});
+  const emptyData = () => ({version:1,items:[],deleted:[],settings:{apiKeys:{tmdbKey:"",omdbKey:"",gbooksKey:""},updatedAt:null},updatedAt:new Date().toISOString()});
 
   const FALLBACK_LOGOS = {
     "amazon prime video": "https://image.tmdb.org/t/p/w92/pvske1MyAoymrs5bguRfVqYiM9a.jpg",
@@ -101,7 +101,9 @@
   function posterUrl(path){return path?`https://image.tmdb.org/t/p/w500${path}`:""}
   function highResPosterUrl(url){
     if(!url)return "";
-    return String(url).replace("https://image.tmdb.org/t/p/w500","https://image.tmdb.org/t/p/original");
+    return String(url)
+      .replace("https://image.tmdb.org/t/p/w500","https://image.tmdb.org/t/p/original")
+      .replace("-M.jpg","-L.jpg");
   }
   function logoUrl(path){
     if(!path)return "";
@@ -261,7 +263,6 @@
     }
 
     list.sort((a,b)=>{
-      // Na aba Livros, os lidos permanecem visíveis, porém sempre por último
       if(activeView==="book" && Boolean(a.watched)!==Boolean(b.watched)){
         return Number(Boolean(a.watched)) - Number(Boolean(b.watched));
       }
@@ -392,6 +393,7 @@
       imdbSource:item.imdbSource||"",
       tmdbId:item.tmdbId||null,
       bookId:item.bookId||"",
+      openLibKey:item.openLibKey||"",
       watched:false,
       myRating:0,
       createdAt:now,
@@ -622,28 +624,43 @@
     return {overview, language, providers, studio, genres, trailerUrl};
   }
 
+  async function fetchOpenLibrarySynopsis(item){
+    if(!item.openLibKey || item.overview)return;
+    try{
+      const res=await fetch(`https://openlibrary.org${item.openLibKey}.json`);
+      if(!res.ok)return;
+      const json=await res.json();
+      const desc=typeof json.description==="string"?json.description:(json.description?.value||"");
+      if(desc){
+        item.overview=desc;
+        item.overviewLanguage="en";
+        item.overviewCheckedAt=new Date().toISOString();
+      }
+    }catch{}
+  }
+
   async function refreshBookMetadata(item){
     try{
-      const url=`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(item.title)}&maxResults=5`;
-      const res=await fetch(url);
-      if(!res.ok)throw new Error();
-      const json=await res.json();
-      const hit=(json.items||[])[0];
+      const books=await searchAllBookSources(item.title);
+      const hit=books[0];
       if(!hit){
-        toast("Livro não encontrado no Google Books.");
+        if($("#detail-dialog").open)renderDetail(item);
+        toast("Livro não encontrado para atualizar.");
         return;
       }
-      const parsed=parseGoogleBook(hit);
+      if(!hit.overview && hit.openLibKey){
+        await fetchOpenLibrarySynopsis(hit);
+      }
       const current=data.items.find(x=>x.id===item.id);
       if(!current)return;
-      current.overview=parsed.overview||current.overview||"";
-      current.overviewLanguage=parsed.overview?parsed.overviewLanguage:(current.overviewLanguage||"");
+      current.overview=hit.overview||current.overview||"";
+      current.overviewLanguage=hit.overview?hit.overviewLanguage:(current.overviewLanguage||"");
       current.overviewCheckedAt=new Date().toISOString();
-      current.author=parsed.author||current.author||"";
-      current.studio=parsed.studio||current.studio||"";
-      current.genres=parsed.genres?.length?parsed.genres:(current.genres||[]);
-      if(!current.poster && parsed.poster)current.poster=parsed.poster;
-      if(!current.imdb && parsed.imdb)current.imdb=parsed.imdb;
+      current.author=hit.author||current.author||"";
+      current.studio=hit.studio||current.studio||"";
+      current.genres=hit.genres?.length?hit.genres:(current.genres||[]);
+      if(!current.poster && hit.poster)current.poster=hit.poster;
+      if(!current.imdb && hit.imdb)current.imdb=hit.imdb;
       current.metaCheckedAt=new Date().toISOString();
       current.updatedAt=new Date().toISOString();
       saveLocal();
@@ -843,6 +860,7 @@
       imdbSource:rating10?"Google Books":"",
       tmdbId:null,
       bookId:vol.id||"",
+      openLibKey:"",
       overview:info.description||"",
       overviewLanguage:info.description?(lang.startsWith("pt")?"pt-BR":lang):"pt-BR",
       providers:[],
@@ -850,13 +868,46 @@
       trailerUrl:"",
       studio:info.publisher||"",
       metaCheckedAt:new Date().toISOString(),
-      popularity:avg>0?avg*12:15
+      popularity:avg>0?avg*12:20
+    };
+  }
+
+  function parseOpenLibraryDoc(doc){
+    const coverId=doc.cover_i;
+    const poster=coverId?`https://covers.openlibrary.org/b/id/${coverId}-M.jpg`:"";
+    const avg=Number(doc.ratings_average)||0;
+    const rating10=avg>0?(avg*2).toFixed(1):"";
+    const firstSentence=Array.isArray(doc.first_sentence)?doc.first_sentence[0]:(doc.first_sentence||"");
+    return {
+      kind:"book",
+      title:doc.title||"",
+      author:Array.isArray(doc.author_name)?doc.author_name.slice(0,2).join(", "):"",
+      year:doc.first_publish_year?String(doc.first_publish_year):"",
+      poster,
+      imdb:rating10,
+      imdbId:"",
+      imdbCheckedAt:new Date().toISOString(),
+      imdbSource:rating10?"Open Library":"",
+      tmdbId:null,
+      bookId:doc.key||`${doc.title}-${doc.first_publish_year||""}`,
+      openLibKey:doc.key||"",
+      overview:firstSentence||"",
+      overviewLanguage:firstSentence?"en":"pt-BR",
+      providers:[],
+      genres:Array.isArray(doc.subject)?doc.subject.slice(0,4):[],
+      trailerUrl:"",
+      studio:Array.isArray(doc.publisher)?doc.publisher[0]:"",
+      metaCheckedAt:new Date().toISOString(),
+      popularity:Number(doc.edition_count)||10
     };
   }
 
   async function searchGoogleBooks(query){
     try{
-      const url=`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=10&printType=books`;
+      const cfg=getConfig();
+      const gKey=cfg.gbooksKey||data.settings?.apiKeys?.gbooksKey||"";
+      const keyParam=gKey?`&key=${encodeURIComponent(gKey)}`:"";
+      const url=`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=10${keyParam}`;
       const res=await fetch(url);
       if(!res.ok)return [];
       const json=await res.json();
@@ -864,6 +915,34 @@
     }catch{
       return [];
     }
+  }
+
+  async function searchOpenLibrary(query){
+    try{
+      const url=`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=10&fields=key,title,author_name,first_publish_year,cover_i,ratings_average,publisher,subject,first_sentence,edition_count`;
+      const res=await fetch(url);
+      if(!res.ok)return [];
+      const json=await res.json();
+      return (json.docs||[]).map(parseOpenLibraryDoc).filter(b=>b.title);
+    }catch{
+      return [];
+    }
+  }
+
+  async function searchAllBookSources(query){
+    const [gbList, olList]=await Promise.all([
+      searchGoogleBooks(query),
+      searchOpenLibrary(query)
+    ]);
+    const merged=[];
+    const seen=new Set();
+    for(const item of [...gbList, ...olList]){
+      const normKey=`${item.title.toLowerCase().trim()}:${item.author.toLowerCase().split(",")[0].trim()}`;
+      if(seen.has(normKey))continue;
+      seen.add(normKey);
+      merged.push(item);
+    }
+    return merged;
   }
 
   async function searchTitles(){
@@ -882,7 +961,7 @@
 
       const [tmdbResponses, booksList]=await Promise.all([
         Promise.all(tmdbTasks),
-        searchGoogleBooks(query)
+        searchAllBookSources(query)
       ]);
 
       const tmdbResolved=tmdbResponses.flatMap(({kind,json})=>(json.results||[]).map(r=>{
@@ -899,6 +978,7 @@
           imdbSource:vote>0?"TMDB":"",
           tmdbId:r.id,
           bookId:"",
+          openLibKey:"",
           overview:r.overview||"",
           overviewLanguage:r.overview?"pt-BR":"",
           providers:[],
@@ -974,7 +1054,11 @@
     const cfg=getConfig(),tmdbKey=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey,omdbKey=cfg.omdbKey||data.settings?.apiKeys?.omdbKey;
     try{
       for(const result of selected){
-        if(result.kind!=="book"){
+        if(result.kind==="book"){
+          if(!result.overview && result.openLibKey){
+            await fetchOpenLibrarySynopsis(result);
+          }
+        }else{
           await fetchImdbRatingForItem(result,tmdbKey,omdbKey);
           if(tmdbKey && !result.metaCheckedAt){
             try{
@@ -1048,7 +1132,13 @@
     renderSearchPreview();
     $("#detail-dialog").showModal();
 
-    if(item.kind==="book")return;
+    if(item.kind==="book"){
+      if(!item.overview && item.openLibKey){
+        await fetchOpenLibrarySynopsis(item);
+        if($("#detail-dialog").open)renderSearchPreview();
+      }
+      return;
+    }
 
     const cfg=getConfig();
     const tmdbKey=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey;
@@ -1094,9 +1184,29 @@
     }
   }
 
-  function fillSettings(){const c=getConfig();$("#gh-owner").value=c.owner||"";$("#gh-repo").value=c.repo||"";$("#gh-branch").value=c.branch||"main";$("#gh-path").value=c.path||"data.json";$("#gh-token").value=c.token||"";$("#tmdb-key").value=c.tmdbKey||data.settings?.apiKeys?.tmdbKey||"";$("#omdb-key").value=c.omdbKey||data.settings?.apiKeys?.omdbKey||"";setSyncState(c.owner&&c.repo&&c.token?"connected":"",c.owner&&c.repo&&c.token?"GitHub configurado":"Somente neste dispositivo")}
+  function fillSettings(){
+    const c=getConfig();
+    $("#gh-owner").value=c.owner||"";
+    $("#gh-repo").value=c.repo||"";
+    $("#gh-branch").value=c.branch||"main";
+    $("#gh-path").value=c.path||"data.json";
+    $("#gh-token").value=c.token||"";
+    $("#tmdb-key").value=c.tmdbKey||data.settings?.apiKeys?.tmdbKey||"";
+    $("#omdb-key").value=c.omdbKey||data.settings?.apiKeys?.omdbKey||"";
+    if($("#gbooks-key"))$("#gbooks-key").value=c.gbooksKey||data.settings?.apiKeys?.gbooksKey||"";
+    setSyncState(c.owner&&c.repo&&c.token?"connected":"",c.owner&&c.repo&&c.token?"GitHub configurado":"Somente neste dispositivo");
+  }
   function saveSettings(){const c=getConfig();Object.assign(c,{owner:$("#gh-owner").value.trim(),repo:$("#gh-repo").value.trim(),branch:$("#gh-branch").value.trim()||"main",path:$("#gh-path").value.trim()||"data.json",token:$("#gh-token").value.trim()});setConfig(c);setSyncState(c.owner&&c.repo&&c.token?"connected":"",c.owner&&c.repo&&c.token?"GitHub configurado":"Somente neste dispositivo");toast("Configurações do GitHub salvas neste dispositivo.");}
-  function saveApiKeys(){const c=getConfig();c.tmdbKey=$("#tmdb-key").value.trim();c.omdbKey=$("#omdb-key").value.trim();setConfig(c);data.settings={...(data.settings||{}),apiKeys:{tmdbKey:c.tmdbKey,omdbKey:c.omdbKey},updatedAt:new Date().toISOString()};saveLocal();toast(c.owner&&c.repo&&c.token?"Chaves salvas. Sincronizando com o repositório privado…":"Chaves salvas neste dispositivo. Configure o GitHub para sincronizá-las.");}
+  function saveApiKeys(){
+    const c=getConfig();
+    c.tmdbKey=$("#tmdb-key").value.trim();
+    c.omdbKey=$("#omdb-key").value.trim();
+    c.gbooksKey=$("#gbooks-key")?$("#gbooks-key").value.trim():"";
+    setConfig(c);
+    data.settings={...(data.settings||{}),apiKeys:{tmdbKey:c.tmdbKey,omdbKey:c.omdbKey,gbooksKey:c.gbooksKey},updatedAt:new Date().toISOString()};
+    saveLocal();
+    toast(c.owner&&c.repo&&c.token?"Chaves salvas. Sincronizando com o repositório privado…":"Chaves salvas neste dispositivo. Configure o GitHub para sincronizá-las.");
+  }
   function ghHeaders(token){return {"Authorization":`Bearer ${token}`,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"}}
   function b64encode(str){const bytes=new TextEncoder().encode(str);let binary="";bytes.forEach(b=>binary+=String.fromCharCode(b));return btoa(binary)}
   function b64decode(b64){const binary=atob(b64.replace(/\n/g,""));const bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));return new TextDecoder().decode(bytes)}
@@ -1134,7 +1244,7 @@
       if(item&&new Date(entry.deletedAt)>=new Date(item.updatedAt||item.createdAt||0))map.delete(id);
     }
     const ls=local.settings||{},rs=remote.settings||{},localKeys=ls.apiKeys||{},remoteKeys=rs.apiKeys||{};
-    const localHas=!!(localKeys.tmdbKey||localKeys.omdbKey),remoteHas=!!(remoteKeys.tmdbKey||remoteKeys.omdbKey);
+    const localHas=!!(localKeys.tmdbKey||localKeys.omdbKey||localKeys.gbooksKey),remoteHas=!!(remoteKeys.tmdbKey||remoteKeys.omdbKey||remoteKeys.gbooksKey);
     let chosen;
     if(localHas&&remoteHas)chosen=new Date(ls.updatedAt||0)>=new Date(rs.updatedAt||0)?ls:rs;
     else if(localHas)chosen=ls;
@@ -1144,7 +1254,7 @@
       version:1,
       items:[...map.values()],
       deleted:pruneDeleted([...deleted.values()]),
-      settings:{apiKeys:{tmdbKey:chosen?.apiKeys?.tmdbKey||"",omdbKey:chosen?.apiKeys?.omdbKey||""},updatedAt:chosen?.updatedAt||null},
+      settings:{apiKeys:{tmdbKey:chosen?.apiKeys?.tmdbKey||"",omdbKey:chosen?.apiKeys?.omdbKey||"",gbooksKey:chosen?.apiKeys?.gbooksKey||""},updatedAt:chosen?.updatedAt||null},
       updatedAt:new Date().toISOString()
     };
   }
@@ -1200,8 +1310,8 @@
         toast("Conexão com o GitHub validada.");
         return;
       }
-      const legacyKeys={tmdbKey:c.tmdbKey||"",omdbKey:c.omdbKey||""};
-      if((legacyKeys.tmdbKey||legacyKeys.omdbKey)&&!data.settings?.updatedAt){
+      const legacyKeys={tmdbKey:c.tmdbKey||"",omdbKey:c.omdbKey||"",gbooksKey:c.gbooksKey||""};
+      if((legacyKeys.tmdbKey||legacyKeys.omdbKey||legacyKeys.gbooksKey)&&!data.settings?.updatedAt){
         data.settings={apiKeys:legacyKeys,updatedAt:new Date().toISOString()};
       }
       const initialMerged=mergeData(data,initialRemote.data);
@@ -1211,9 +1321,11 @@
       const updatedConfig=getConfig();
       updatedConfig.tmdbKey=data.settings?.apiKeys?.tmdbKey||"";
       updatedConfig.omdbKey=data.settings?.apiKeys?.omdbKey||"";
+      updatedConfig.gbooksKey=data.settings?.apiKeys?.gbooksKey||"";
       setConfig(updatedConfig);
       if($("#tmdb-key"))$("#tmdb-key").value=updatedConfig.tmdbKey;
       if($("#omdb-key"))$("#omdb-key").value=updatedConfig.omdbKey;
+      if($("#gbooks-key"))$("#gbooks-key").value=updatedConfig.gbooksKey;
       render();
       setSyncState("connected","Sincronizado com GitHub");
       $("#sync-message").textContent=`Sincronizado em ${new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}.`;
@@ -1289,7 +1401,6 @@
       });
     });
 
-    // Fechar a capa em tela cheia ao clicar em qualquer lugar
     $("#poster-lightbox")?.addEventListener("click",()=>{
       $("#poster-lightbox").close();
     });
