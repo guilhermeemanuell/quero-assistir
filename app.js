@@ -22,6 +22,10 @@
   };
 
   let data = loadLocal();
+  // URL do Cloudflare Worker (proxy do Google Books). Ex.: "https://livros.seu-usuario.workers.dev"
+  // Se ficar vazio, o app consulta o Google Books diretamente (sujeito a limite de requisições).
+  const BOOKS_PROXY = "";
+
   let activeView = "movie"; // "movie" | "tv" | "watched" | "book"
   let searchMode = "screen"; // "screen" (filmes/séries) | "book" (somente livros)
   let activeQuickFilter = null;
@@ -944,14 +948,30 @@
     const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     let lastStatus=0;
 
-    const run=async qs=>{
-      const urls=gKey?[`${root}?${qs}&key=${encodeURIComponent(gKey)}`,`${root}?${qs}`]:[`${root}?${qs}`];
+    const cacheGet=k=>{try{const o=JSON.parse(localStorage.getItem("bkcache:"+k)||"null");return o&&Date.now()-o.t<6*3600e3?o.v:null}catch{return null}};
+    const cacheSet=(k,v)=>{try{localStorage.setItem("bkcache:"+k,JSON.stringify({t:Date.now(),v}))}catch{
+      try{Object.keys(localStorage).filter(x=>x.startsWith("bkcache:")).forEach(x=>localStorage.removeItem(x))}catch{}
+    }};
+
+    // qs recebe só o texto da consulta ("q"); monta a URL conforme usar proxy ou Google direto
+    const run=async qText=>{
+      const cached=cacheGet(qText);
+      if(cached)return cached;
+      let urls;
+      if(BOOKS_PROXY){
+        urls=[`${BOOKS_PROXY.replace(/\/$/,"")}/?q=${encodeURIComponent(qText)}`];
+      }else{
+        const qs=`q=${encodeURIComponent(qText)}${common}`;
+        urls=gKey?[`${root}?${qs}&key=${encodeURIComponent(gKey)}`,`${root}?${qs}`]:[`${root}?${qs}`];
+      }
       let lastErr;
       for(const url of urls){
         for(let attempt=0;attempt<2;attempt++){
           try{
-            const json=await fetchJsonTimeout(url,8000);
-            return json.items||[];
+            const json=await fetchJsonTimeout(url,10000);
+            const items=json.items||[];
+            cacheSet(qText,items);
+            return items;
           }catch(e){
             lastErr=e;lastStatus=e.status||0;
             const transient=!e.status||e.status===429||e.status>=500;
@@ -959,7 +979,6 @@
             break;
           }
         }
-        // chave inválida/restrita (400/403): tenta sem chave; outros erros: desiste
         if(!(lastErr&&(lastErr.status===400||lastErr.status===403)))break;
       }
       throw lastErr;
@@ -979,9 +998,11 @@
     const add=list=>{for(const v of list){if(v.id&&!seen.has(v.id)){seen.add(v.id);vols.push(v)}}};
     let anyOk=false;
 
-    try{add(await run(`q=${encodeURIComponent(query)}${common}`));anyOk=true}catch{}
-    if(!vols.some(v=>score(v)<=2)){
-      try{add(await run(`q=${encodeURIComponent(`intitle:${query}`)}${common}`));anyOk=true}catch{}
+    const digits=query.replace(/[-\s]/g,"");
+    const isIsbn=/^(\d{9}[\dXx]|\d{13})$/.test(digits);
+    try{add(await run(isIsbn?`isbn:${digits}`:query));anyOk=true}catch{}
+    if(!isIsbn && !vols.some(v=>score(v)<=2)){
+      try{add(await run(`intitle:${query}`));anyOk=true}catch{}
     }
     if(!anyOk)return {items:[],failed:true,status:lastStatus};
 
@@ -1044,7 +1065,7 @@
     if(!list.length && gb.failed){
       // O Google falhou: não dá para afirmar que o livro "não existe" — mostra o motivo real.
       const why=gb.status===429?"limite de consultas atingido (HTTP 429)":gb.status?`erro HTTP ${gb.status}`:"sem resposta/tempo esgotado";
-      throw new Error(`Google Livros indisponível: ${why}. Aguarde um instante e tente de novo; se persistir, cadastre uma chave gratuita da Google Books API em Ajustes.`);
+      throw new Error(`Google Livros indisponível: ${why}. Aguarde um instante e tente novamente, ou use o cadastro manual.`);
     }
     return list;
   }
@@ -1229,7 +1250,7 @@
       $("#search-page-title").textContent="Buscar livros";
       $("#search-input-label").textContent="Nome do livro ou autor";
       $("#title-search").placeholder="Ex.: O Hobbit ou Dom Casmurro";
-      $("#search-mode-hint").textContent="Busca direta no Google Livros (em português ou inglês).";
+      $("#search-mode-hint").textContent="Busca no Google Livros (título, autor ou ISBN).";
       $("#manual-kind").value="book";
     }else{
       $("#search-page-eyebrow").textContent="ADICIONAR À BIBLIOTECA";
