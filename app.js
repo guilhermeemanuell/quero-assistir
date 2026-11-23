@@ -4,6 +4,7 @@
   const $$ = (s) => [...document.querySelectorAll(s)];
   const STORAGE = "minhaColecao.v1";
   const CONFIG = "minhaColecao.config.v1";
+  const SORT_KEY = "minhaColecao.sort.v1";
   const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
   const emptyData = () => ({version:1,items:[],deleted:[],settings:{apiKeys:{tmdbKey:"",omdbKey:""},updatedAt:null},updatedAt:new Date().toISOString()});
 
@@ -21,7 +22,7 @@
   };
 
   let data = loadLocal();
-  let activeView = "movie"; // "movie" | "tv" | "watched"
+  let activeView = "movie"; // "movie" | "tv" | "watched" | "book"
   let activeQuickFilter = null; // { type: "provider" | "genre", value: string }
   let selectedSearch = new Map();
   let toastTimer;
@@ -98,12 +99,24 @@
 
   function setSyncState(state,label){const el=$("#sync-indicator");el.className="sync-indicator "+state;el.querySelector("span").textContent=label}
   function posterUrl(path){return path?`https://image.tmdb.org/t/p/w500${path}`:""}
+  function highResPosterUrl(url){
+    if(!url)return "";
+    return String(url).replace("https://image.tmdb.org/t/p/w500","https://image.tmdb.org/t/p/original");
+  }
   function logoUrl(path){
     if(!path)return "";
     const str=String(path).trim();
     if(!str)return "";
     if(str.startsWith("http://")||str.startsWith("https://"))return str;
     return `https://image.tmdb.org/t/p/w92${str.startsWith("/")?str:`/${str}`}`;
+  }
+
+  function kindLabel(kind){
+    return kind==="book"?"Livro":kind==="tv"?"Série":"Filme";
+  }
+
+  function kindEyebrow(kind){
+    return kind==="book"?"LIVRO":kind==="tv"?"SÉRIE":"FILME";
   }
 
   function cleanProviderName(rawName=""){
@@ -129,7 +142,7 @@
 
   function normalizeProviders(providers){
     if(!Array.isArray(providers))return [];
-    const map=new Map(); // lowerCaseName -> { name, logo, isExact }
+    const map=new Map();
     for(const p of providers){
       const rawName=typeof p==="string"?p.trim():(p?.name||p?.provider_name||"").trim();
       const name=cleanProviderName(rawName);
@@ -153,6 +166,7 @@
   }
 
   function hasValidProviderLogos(item){
+    if(item.kind==="book")return true;
     if(!Array.isArray(item.providers))return false;
     if(item.providers.length===0)return Boolean(item.metaCheckedAt);
     return item.providers.every(p=>typeof p==="object" && p!==null && Boolean(p.logo));
@@ -175,8 +189,8 @@
     const container=$("#quick-filters");
     if(!container)return;
     const baseItems=getBaseViewItems();
-    const providerMap=new Map(); // name -> {name, logo, count}
-    const genreMap=new Map(); // name -> count
+    const providerMap=new Map();
+    const genreMap=new Map();
 
     for(const item of baseItems){
       for(const p of normalizeProviders(item.providers)){
@@ -242,7 +256,7 @@
     }
 
     if(q){
-      list=list.filter(x=>`${x.title} ${x.year||""} ${x.notes||""}`.toLocaleLowerCase("pt-BR").includes(q));
+      list=list.filter(x=>`${x.title} ${x.year||""} ${x.author||""} ${x.notes||""}`.toLocaleLowerCase("pt-BR").includes(q));
     }
 
     list.sort((a,b)=>sort==="title"?a.title.localeCompare(b.title,"pt-BR"):sort==="imdb"?(Number(b.imdb)||0)-(Number(a.imdb)||0):sort==="myRating"?(b.myRating||0)-(a.myRating||0):sort==="year"?(b.year||0)-(a.year||0):new Date(b.createdAt)-new Date(a.createdAt));
@@ -256,9 +270,11 @@
 
   function card(item){
     const poster=item.poster?`<img class="poster" src="${escapeHtml(item.poster)}" alt="Pôster de ${escapeHtml(item.title)}" loading="lazy" onerror="this.style.display='none'">`:`<div class="poster-placeholder">${escapeHtml(item.title.slice(0,1).toUpperCase())}</div>`;
-    const kindBadge=activeView==="watched"?` · ${item.kind==="movie"?"Filme":"Série"}`:"";
+    const kindBadge=activeView==="watched"?` · ${kindLabel(item.kind)}`:"";
     const noteIndicator=item.notes?`<span class="note-dot" title="${escapeHtml(item.notes)}">✎</span>`:"";
-    return `<article class="media-card" data-card="${item.id}"><div class="poster-wrap" data-open="${item.id}">${poster}<span class="imdb-badge"><b>IMDb</b> ${item.imdb?Number(item.imdb).toFixed(1):"—"}</span>${item.watched?'<span class="watched-ribbon">✓ ASSISTIDO</span>':""}<button class="card-menu" data-menu="${item.id}" aria-label="Opções de ${escapeHtml(item.title)}">⋯</button></div><div class="media-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div><div class="media-meta">${item.year||"Ano não informado"}${kindBadge}${noteIndicator}</div>${stars(item)}</article>`;
+    const scoreLabel=item.kind==="book"?"Aval.":"IMDb";
+    const doneRibbon=item.watched?`<span class="watched-ribbon">${item.kind==="book"?"✓ LIDO":"✓ ASSISTIDO"}</span>`:"";
+    return `<article class="media-card" data-card="${item.id}"><div class="poster-wrap" data-open="${item.id}">${poster}<span class="imdb-badge"><b>${scoreLabel}</b> ${item.imdb?Number(item.imdb).toFixed(1):"—"}</span>${doneRibbon}<button class="card-menu" data-menu="${item.id}" aria-label="Opções de ${escapeHtml(item.title)}">⋯</button></div><div class="media-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div><div class="media-meta">${item.year||"Ano não informado"}${kindBadge}${noteIndicator}</div>${stars(item)}</article>`;
   }
 
   function render(){
@@ -266,18 +282,22 @@
     const list=getItems();
     const pendingMovies=data.items.filter(x=>!x.watched && x.kind==="movie").length;
     const pendingSeries=data.items.filter(x=>!x.watched && x.kind==="tv").length;
+    const pendingBooks=data.items.filter(x=>!x.watched && x.kind==="book").length;
     const watchedTotal=data.items.filter(x=>x.watched).length;
 
     $("#collection-grid").innerHTML=list.map(card).join("");
     $("#movie-count").textContent=pendingMovies;
     $("#series-count").textContent=pendingSeries;
     $("#watched-count").textContent=watchedTotal;
+    $("#book-count").textContent=pendingBooks;
     $("#tab-movie-count").textContent=pendingMovies;
     $("#tab-tv-count").textContent=pendingSeries;
+    $("#tab-book-count").textContent=pendingBooks;
 
     const isWatched=activeView==="watched";
-    $("#library-eyebrow").textContent=isWatched?"HISTÓRICO DE ASSISTIDOS":"EXPLORE SUA LISTA";
-    $("#library-title").textContent=isWatched?"Já assisti":"Minha biblioteca";
+    const isBook=activeView==="book";
+    $("#library-eyebrow").textContent=isWatched?"HISTÓRICO":isBook?"SUA ESTANTE":"EXPLORE SUA LISTA";
+    $("#library-title").textContent=isWatched?"Já assisti / li":isBook?"Meus livros":"Minha biblioteca";
 
     const randomBtn=$("#random-pick");
     if(randomBtn)randomBtn.disabled=list.length===0;
@@ -298,12 +318,16 @@
         $("#empty-copy").textContent="Toque em 'Todos' nas pílulas acima para voltar a ver sua lista completa.";
         $("#empty-add").hidden=true;
       }else if(isWatched){
-        $("#empty-title").textContent="Nenhum título assistido ainda";
-        $("#empty-copy").textContent="Quando você marcar um filme ou série como assistido, ele aparecerá aqui.";
+        $("#empty-title").textContent="Nenhum título concluído ainda";
+        $("#empty-copy").textContent="Quando você marcar um filme, série ou livro como concluído, ele aparecerá aqui.";
         $("#empty-add").hidden=true;
+      }else if(isBook){
+        $("#empty-title").textContent="Sua próxima leitura começa aqui";
+        $("#empty-copy").textContent="Busque e adicione os livros que você deseja ler nesta seção.";
+        $("#empty-add").hidden=false;
       }else{
         $("#empty-title").textContent="Sua próxima maratona começa aqui";
-        $("#empty-copy").textContent="Adicione filmes e séries que você quer assistir. Eles ficarão organizados nesta biblioteca.";
+        $("#empty-copy").textContent="Adicione filmes, séries e livros que você quer acompanhar. Eles ficarão organizados nesta biblioteca.";
         $("#empty-add").hidden=false;
       }
     }
@@ -314,6 +338,8 @@
     activeQuickFilter=null;
     activeView=filter;
     render();
+    const activeStat=$(`.stat-action[data-stat-filter="${filter}"]`);
+    activeStat?.scrollIntoView({behavior:"smooth",inline:"nearest",block:"nearest"});
     if(scroll)$("#library-section")?.scrollIntoView({behavior:"smooth",block:"start"});
   }
 
@@ -336,12 +362,13 @@
       id:uid(),
       kind:item.kind,
       title:item.title,
+      author:item.author||"",
       year:item.year||null,
       poster:item.poster||"",
       overview:item.overview||"",
       overviewLanguage:item.overviewLanguage||"",
       overviewCheckedAt:item.overviewCheckedAt||null,
-      providers:normalizeProviders(item.providers||[]),
+      providers:item.kind==="book"?[]:normalizeProviders(item.providers||[]),
       genres:Array.isArray(item.genres)?item.genres:[],
       trailerUrl:item.trailerUrl||"",
       studio:item.studio||"",
@@ -352,6 +379,7 @@
       imdbCheckedAt:item.imdbCheckedAt||null,
       imdbSource:item.imdbSource||"",
       tmdbId:item.tmdbId||null,
+      bookId:item.bookId||"",
       watched:false,
       myRating:0,
       createdAt:now,
@@ -364,6 +392,20 @@
   }
 
   function renderWhereToWatch(item){
+    if(item.kind==="book"){
+      let bookHtml="";
+      if(item.author){
+        bookHtml+=`<p class="detail-provider"><strong>Autor(a):</strong> ${escapeHtml(item.author)}</p>`;
+      }
+      if(item.studio){
+        bookHtml+=`<p class="detail-provider"><strong>Editora:</strong> ${escapeHtml(item.studio)}</p>`;
+      }
+      if(Array.isArray(item.genres) && item.genres.length){
+        bookHtml+=`<p class="detail-genres">${item.genres.map(g=>`<span>${escapeHtml(g)}</span>`).join(" · ")}</p>`;
+      }
+      return bookHtml;
+    }
+
     const providers=normalizeProviders(item.providers);
     let html="";
     if(providers.length){
@@ -384,16 +426,36 @@
   }
 
   function getTrailerLink(item){
+    if(item.kind==="book"){
+      const q=encodeURIComponent(`${item.title} ${item.author||""} livro resenha`.trim());
+      return `https://www.youtube.com/results?search_query=${q}`;
+    }
     if(item.trailerUrl)return item.trailerUrl;
     const q=encodeURIComponent(`${item.title} ${item.year||""} trailer legendado`.trim());
     return `https://www.youtube.com/results?search_query=${q}`;
   }
 
+  function openPosterLightbox(src, alt="Capa ampliada"){
+    if(!src)return;
+    const dlg=$("#poster-lightbox");
+    const img=$("#lightbox-img");
+    if(!dlg || !img)return;
+    img.src=highResPosterUrl(src);
+    img.alt=alt;
+    img.onerror=()=>{
+      if(img.src!==src)img.src=src;
+    };
+    dlg.showModal();
+  }
+
   function renderDetail(item, {editing=false, refreshing=false}={}){
-    const poster=item.poster?`<img class="detail-poster" src="${escapeHtml(item.poster)}" alt="Pôster de ${escapeHtml(item.title)}">`:`<div class="detail-poster poster-placeholder">${escapeHtml(item.title[0]||"?")}</div>`;
+    const poster=item.poster
+      ? `<button type="button" class="detail-poster-btn" data-zoom-poster="${escapeHtml(item.poster)}" data-zoom-title="${escapeHtml(item.title)}" title="Ampliar capa" aria-label="Ver capa de ${escapeHtml(item.title)} em tela cheia"><img class="detail-poster" src="${escapeHtml(item.poster)}" alt="Pôster de ${escapeHtml(item.title)}"><span class="poster-zoom-badge" aria-hidden="true">⤢</span></button>`
+      : `<div class="detail-poster poster-placeholder">${escapeHtml(item.title[0]||"?")}</div>`;
     const current=item.myRating||0;
     const clearBtn=current>0?`<button type="button" class="clear-stars-btn" data-detail-rate="0" data-id="${item.id}" title="Zerar estrelas" aria-label="Zerar estrelas">✕ Zerar</button>`:"";
     const trailerHref=getTrailerLink(item);
+    const isBook=item.kind==="book";
 
     if(editing){
       $("#detail-content").innerHTML=`
@@ -407,15 +469,16 @@
               <select id="edit-kind">
                 <option value="movie" ${item.kind==="movie"?"selected":""}>Filme</option>
                 <option value="tv" ${item.kind==="tv"?"selected":""}>Série</option>
+                <option value="book" ${item.kind==="book"?"selected":""}>Livro</option>
               </select>
             </label>
             <label class="field-label full">Título
               <input id="edit-title" required maxlength="140" value="${escapeHtml(item.title)}">
             </label>
             <label class="field-label">Ano
-              <input id="edit-year" type="number" min="1888" max="2100" value="${escapeHtml(item.year||"")}">
+              <input id="edit-year" type="number" min="1000" max="2100" value="${escapeHtml(item.year||"")}">
             </label>
-            <label class="field-label">Nota IMDb (0 a 10)
+            <label class="field-label">Nota (0 a 10)
               <input id="edit-imdb" type="number" min="0" max="10" step="0.1" value="${escapeHtml(item.imdb||"")}">
             </label>
             <label class="field-label full">URL da capa
@@ -433,28 +496,41 @@
       return;
     }
 
-    const synopsis=item.overview?`<section class="detail-synopsis"><h3>Sinopse</h3><p>${escapeHtml(item.overview)}</p>${item.overviewLanguage&&item.overviewLanguage!=="pt-BR"?'<small class="synopsis-note">Sinopse no idioma disponível no TMDB.</small>':""}</section>`:`<section class="detail-synopsis"><h3>Sinopse</h3><p class="synopsis-muted">${item.tmdbId?"Carregando sinopse…":"Sinopse não disponível para este cadastro."}</p></section>`;
+    const synopsis=item.overview
+      ? `<section class="detail-synopsis"><h3>Sinopse</h3><p>${escapeHtml(item.overview)}</p>${item.overviewLanguage&&item.overviewLanguage!=="pt-BR"?'<small class="synopsis-note">Sinopse no idioma original disponível.</small>':""}</section>`
+      : `<section class="detail-synopsis"><h3>Sinopse</h3><p class="synopsis-muted">${item.tmdbId?"Carregando sinopse…":"Sinopse não disponível para este cadastro."}</p></section>`;
 
     const notesSection=`
       <section class="detail-notes">
         <label class="field-label" for="detail-note-input">Notas pessoais / Quem indicou</label>
         <div class="note-row">
-          <input id="detail-note-input" type="text" maxlength="240" placeholder="Ex.: Indicação do João · Assistir com a família" value="${escapeHtml(item.notes||"")}" data-note-id="${item.id}">
+          <input id="detail-note-input" type="text" maxlength="240" placeholder="Ex.: Indicação do João · Ler no fim de semana" value="${escapeHtml(item.notes||"")}" data-note-id="${item.id}">
           <button type="button" class="secondary-button note-save-btn" data-save-note="${item.id}">Salvar nota</button>
         </div>
       </section>`;
+
+    const statusBadge=isBook
+      ? (item.watched?"LIDO":"QUERO LER")
+      : (item.watched?"ASSISTIDO":"QUERO ASSISTIR");
+
+    const toggleLabel=isBook
+      ? (item.watched?"↶ Marcar como não lido":"✓ Marcar como lido")
+      : (item.watched?"↶ Marcar como não assistido":"✓ Marcar como assistido");
+
+    const scorePrefix=isBook?"★ Avaliação":"★ IMDb";
+    const videoBtnLabel=isBook?"▶ Resenhas":"▶ Trailer";
 
     $("#detail-content").innerHTML=`
       <div class="detail-layout">
         ${poster}
         <div class="detail-info">
-          <p class="eyebrow">${item.kind==="movie"?"FILME":"SÉRIE"} · ${item.watched?"ASSISTIDO":"QUERO ASSISTIR"}</p>
+          <p class="eyebrow">${kindEyebrow(item.kind)} · ${statusBadge}</p>
           <h2>${escapeHtml(item.title)}</h2>
           <p>${item.year||"Ano não informado"}</p>
           ${renderWhereToWatch(item)}
           <div class="detail-rating-row">
-            <div class="detail-rating">★ IMDb ${item.imdb?Number(item.imdb).toFixed(1):"Sem nota"}</div>
-            <a class="trailer-btn" href="${escapeHtml(trailerHref)}" target="_blank" rel="noopener noreferrer">▶ Trailer</a>
+            <div class="detail-rating">${scorePrefix} ${item.imdb?Number(item.imdb).toFixed(1):"Sem nota"}</div>
+            <a class="trailer-btn" href="${escapeHtml(trailerHref)}" target="_blank" rel="noopener noreferrer">${videoBtnLabel}</a>
           </div>
           <p>Minha avaliação</p>
           <div class="detail-stars">${[1,2,3,4,5].map(n=>`<button type="button" class="star ${n<=current?"filled":""}" data-detail-rate="${n}" data-id="${item.id}" aria-label="${n===current?"Zerar estrelas":`${n} estrelas`}">★</button>`).join("")}${clearBtn}</div>
@@ -463,7 +539,7 @@
       ${synopsis}
       ${notesSection}
       <div class="detail-actions">
-        <button type="button" class="secondary-button" data-toggle-watched="${item.id}">${item.watched?"↶ Marcar como não assistido":"✓ Marcar como assistido"}</button>
+        <button type="button" class="secondary-button" data-toggle-watched="${item.id}">${toggleLabel}</button>
         <button type="button" class="secondary-button" data-edit="${item.id}">Editar</button>
         <button type="button" class="secondary-button" data-refresh="${item.id}" ${refreshing?"disabled":""}>${refreshing?"↻ Atualizando…":"↻ Atualizar dados"}</button>
         <button type="button" class="secondary-button danger-button" data-delete="${item.id}">Excluir</button>
@@ -534,7 +610,44 @@
     return {overview, language, providers, studio, genres, trailerUrl};
   }
 
+  async function refreshBookMetadata(item){
+    try{
+      const url=`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(item.title)}&maxResults=5`;
+      const res=await fetch(url);
+      if(!res.ok)throw new Error();
+      const json=await res.json();
+      const hit=(json.items||[])[0];
+      if(!hit){
+        toast("Livro não encontrado no Google Books.");
+        return;
+      }
+      const parsed=parseGoogleBook(hit);
+      const current=data.items.find(x=>x.id===item.id);
+      if(!current)return;
+      current.overview=parsed.overview||current.overview||"";
+      current.overviewLanguage=parsed.overview?parsed.overviewLanguage:(current.overviewLanguage||"");
+      current.overviewCheckedAt=new Date().toISOString();
+      current.author=parsed.author||current.author||"";
+      current.studio=parsed.studio||current.studio||"";
+      current.genres=parsed.genres?.length?parsed.genres:(current.genres||[]);
+      if(!current.poster && parsed.poster)current.poster=parsed.poster;
+      if(!current.imdb && parsed.imdb)current.imdb=parsed.imdb;
+      current.metaCheckedAt=new Date().toISOString();
+      current.updatedAt=new Date().toISOString();
+      saveLocal();
+      if($("#detail-dialog").open)renderDetail(current);
+      toast("Dados do livro atualizados.");
+    }catch{
+      if($("#detail-dialog").open)renderDetail(item);
+      toast("Falha ao atualizar os dados do livro.");
+    }
+  }
+
   async function loadItemMetadata(item, {force=false}={}){
+    if(item.kind==="book"){
+      if(force)await refreshBookMetadata(item);
+      return;
+    }
     if(!item.tmdbId && !force)return;
     const validLogos=hasValidProviderLogos(item);
     const needsOverview=force || (!item.overview && !item.overviewCheckedAt);
@@ -615,7 +728,7 @@
     if(!item)return;
     renderDetail(item);
     if(!$("#detail-dialog").open)$("#detail-dialog").showModal();
-    if((!item.overview && !item.overviewCheckedAt) || !item.metaCheckedAt || !hasValidProviderLogos(item)){
+    if(item.kind!=="book" && ((!item.overview && !item.overviewCheckedAt) || !item.metaCheckedAt || !hasValidProviderLogos(item))){
       loadItemMetadata(item);
     }
   }
@@ -660,7 +773,7 @@
   async function tmdbExternalId(key,kind,id){try{const r=await fetch(`https://api.themoviedb.org/3/${kind}/${id}/external_ids?api_key=${encodeURIComponent(key)}`);if(!r.ok)return "";const j=await r.json();return j.imdb_id||""}catch{return""}}
 
   async function fetchImdbRatingForItem(item, tmdbKey, omdbKey){
-    if(item.imdbCheckedAt || !tmdbKey || !omdbKey || !item.tmdbId)return false;
+    if(item.kind==="book" || item.imdbCheckedAt || !tmdbKey || !omdbKey || !item.tmdbId)return false;
     try{
       const imdbId=item.imdbId || await tmdbExternalId(tmdbKey,item.kind,item.tmdbId);
       item.imdbId=imdbId||"";
@@ -686,8 +799,9 @@
     const tmdbKey=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey;
     const omdbKey=cfg.omdbKey||data.settings?.apiKeys?.omdbKey;
     if(!tmdbKey || !omdbKey)return;
-    const subset=results.slice(0,18);
+    const subset=results.slice(0,22);
     await Promise.allSettled(subset.map(async (r,idx)=>{
+      if(r.kind==="book")return;
       const updated=await fetchImdbRatingForItem(r,tmdbKey,omdbKey);
       if(!updated || batchId!==searchBatchId)return;
       const badgeEl=$(`[data-search-imdb="${idx}"]`);
@@ -697,21 +811,74 @@
     }));
   }
 
+  function parseGoogleBook(vol){
+    const info=vol.volumeInfo||{};
+    const links=info.imageLinks||{};
+    let thumb=(links.extraLarge||links.large||links.medium||links.thumbnail||links.smallThumbnail||"").replace(/^http:/i,"https:");
+    if(thumb)thumb=thumb.replace(/&edge=curl/gi,"");
+    const avg=Number(info.averageRating)||0;
+    const rating10=avg>0?(avg*2).toFixed(1):"";
+    const lang=String(info.language||"").toLowerCase();
+    return {
+      kind:"book",
+      title:info.title||"",
+      author:Array.isArray(info.authors)?info.authors.join(", "):"",
+      year:String(info.publishedDate||"").slice(0,4),
+      poster:thumb,
+      imdb:rating10,
+      imdbId:"",
+      imdbCheckedAt:new Date().toISOString(),
+      imdbSource:rating10?"Google Books":"",
+      tmdbId:null,
+      bookId:vol.id||"",
+      overview:info.description||"",
+      overviewLanguage:info.description?(lang.startsWith("pt")?"pt-BR":lang):"pt-BR",
+      providers:[],
+      genres:Array.isArray(info.categories)?info.categories:[],
+      trailerUrl:"",
+      studio:info.publisher||"",
+      metaCheckedAt:new Date().toISOString(),
+      popularity:avg>0?avg*12:15
+    };
+  }
+
+  async function searchGoogleBooks(query){
+    try{
+      const url=`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=10&printType=books`;
+      const res=await fetch(url);
+      if(!res.ok)return [];
+      const json=await res.json();
+      return (json.items||[]).map(parseGoogleBook).filter(b=>b.title);
+    }catch{
+      return [];
+    }
+  }
+
   async function searchTitles(){
     const cfg=getConfig(),key=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey,query=$("#title-search").value.trim();
     $("#add-error").textContent="";$("#search-results").innerHTML="";
     if(!query){$("#add-error").textContent="Digite o nome de um título.";return}
-    if(!key){$("#add-error").textContent="Configure sua chave API do TMDB em Ajustes ou use o cadastro manual.";return}
     $("#search-title-button").disabled=true;$("#search-title-button").textContent="Buscando...";
     const currentBatch=++searchBatchId;
     try{
-      const endpoints=["movie","tv"];
-      const responses=await Promise.all(endpoints.map(async endpoint=>{const url=`https://api.themoviedb.org/3/search/${endpoint}?api_key=${encodeURIComponent(key)}&language=pt-BR&query=${encodeURIComponent(query)}&include_adult=false`;const res=await fetch(url);if(!res.ok)throw new Error(res.status===401?"Chave TMDB inválida.":"Não foi possível consultar o TMDB.");return {kind:endpoint,json:await res.json()}}));
-      const resolved=responses.flatMap(({kind,json})=>(json.results||[]).map(r=>{
+      const tmdbTasks=key ? ["movie","tv"].map(async endpoint=>{
+        const url=`https://api.themoviedb.org/3/search/${endpoint}?api_key=${encodeURIComponent(key)}&language=pt-BR&query=${encodeURIComponent(query)}&include_adult=false`;
+        const res=await fetch(url);
+        if(!res.ok)throw new Error(res.status===401?"Chave TMDB inválida.":"Não foi possível consultar o TMDB.");
+        return {kind:endpoint,json:await res.json()};
+      }) : [];
+
+      const [tmdbResponses, booksList]=await Promise.all([
+        Promise.all(tmdbTasks),
+        searchGoogleBooks(query)
+      ]);
+
+      const tmdbResolved=tmdbResponses.flatMap(({kind,json})=>(json.results||[]).map(r=>{
         const vote=Number(r.vote_average)||0;
         return {
           kind,
           title:kind==="movie"?(r.title||r.original_title):(r.name||r.original_name),
+          author:"",
           year:(r.release_date||r.first_air_date||"").slice(0,4),
           poster:posterUrl(r.poster_path),
           imdb:vote>0?vote.toFixed(1):"",
@@ -719,6 +886,7 @@
           imdbCheckedAt:null,
           imdbSource:vote>0?"TMDB":"",
           tmdbId:r.id,
+          bookId:"",
           overview:r.overview||"",
           overviewLanguage:r.overview?"pt-BR":"",
           providers:[],
@@ -728,7 +896,24 @@
           popularity:Number(r.popularity)||0
         };
       })).filter(r=>r.title).sort((a,b)=>b.popularity-a.popularity);
-      if(!resolved.length){$("#search-results").innerHTML='<p class="field-hint">Nenhum resultado encontrado. Tente outro nome ou cadastre manualmente.</p>';return}
+
+      // Intercala resultados do TMDB e Google Books para facilitar o acesso a ambos
+      const resolved=[];
+      const maxLen=Math.max(tmdbResolved.length,booksList.length);
+      for(let i=0;i<maxLen;i++){
+        if(i<tmdbResolved.length)resolved.push(tmdbResolved[i]);
+        if(i<booksList.length)resolved.push(booksList[i]);
+      }
+
+      if(!key && resolved.length){
+        $("#add-error").textContent="Chave TMDB não configurada: exibindo apenas resultados de livros.";
+      }
+
+      if(!resolved.length){
+        $("#search-results").innerHTML='<p class="field-hint">Nenhum resultado encontrado. Tente outro nome ou cadastre manualmente.</p>';
+        return;
+      }
+
       selectedSearch.clear();
       $("#search-results")._results=resolved;
       renderSearchResults();
@@ -740,14 +925,21 @@
     }
   }
 
-  function searchKey(item){return `${item.kind}:${item.tmdbId}`}
+  function searchKey(item){
+    return item.kind==="book" ? `book:${item.bookId||item.title}` : `${item.kind}:${item.tmdbId}`;
+  }
+
   function renderSearchResults(){
     const results=$("#search-results")._results||[];
     $("#search-results").innerHTML=results.map((r,i)=>{
       const key=searchKey(r),chosen=selectedSearch.has(key),exists=isAlreadyAdded(r);
       const poster=r.poster?`<img class="poster" src="${escapeHtml(r.poster)}" alt="Pôster de ${escapeHtml(r.title)}" loading="lazy" onerror="this.style.display='none'">`:`<div class="poster-placeholder">${escapeHtml(r.title.slice(0,1).toUpperCase())}</div>`;
       const ratingText=r.imdb?Number(r.imdb).toFixed(1):"—";
-      return `<article class="media-card search-result-card ${chosen?"selected":""} ${exists?"already-added":""}"><div class="poster-wrap search-poster-wrap" data-search-open="${i}" role="button" tabindex="0" aria-label="Ver sinopse de ${escapeHtml(r.title)}">${poster}<span class="imdb-badge"><b>${r.kind==="movie"?"FILME":"SÉRIE"}</b> ${r.year||"—"}</span><span class="search-poster-hint">⌕ Ver sinopse</span><span class="imdb-badge search-imdb-badge" data-search-imdb="${i}"><b>IMDb</b> ★ ${ratingText}</span><button type="button" class="search-select ${chosen?"selected":""} ${exists?"disabled":""}" data-result="${i}" aria-pressed="${chosen}" ${exists?"disabled":""}>${exists?"✓ Já adicionado":chosen?"✓ Selecionado":"＋ Selecionar"}</button></div><div class="media-title" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</div><div class="media-meta">${r.year||"Ano não informado"} · ${r.kind==="movie"?"Filme":"Série"}${exists?" · Já na biblioteca":""}</div></article>`;
+      const scoreTag=r.kind==="book"?"Aval.":"IMDb";
+      const subMeta=r.kind==="book" && r.author
+        ? `${r.year||"Ano n/d"} · Livro · ${r.author}`
+        : `${r.year||"Ano não informado"} · ${kindLabel(r.kind)}${exists?" · Já na biblioteca":""}`;
+      return `<article class="media-card search-result-card ${chosen?"selected":""} ${exists?"already-added":""}"><div class="poster-wrap search-poster-wrap" data-search-open="${i}" role="button" tabindex="0" aria-label="Ver sinopse de ${escapeHtml(r.title)}">${poster}<span class="imdb-badge"><b>${kindEyebrow(r.kind)}</b> ${r.year||"—"}</span><span class="search-poster-hint">⌕ Ver sinopse</span><span class="imdb-badge search-imdb-badge" data-search-imdb="${i}"><b>${scoreTag}</b> ★ ${ratingText}</span><button type="button" class="search-select ${chosen?"selected":""} ${exists?"disabled":""}" data-result="${i}" aria-pressed="${chosen}" ${exists?"disabled":""}>${exists?"✓ Já adicionado":chosen?"✓ Selecionado":"＋ Selecionar"}</button></div><div class="media-title" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</div><div class="media-meta" title="${escapeHtml(subMeta)}">${escapeHtml(subMeta)}</div></article>`;
     }).join("");
     $("#selected-count").textContent=`${selectedSearch.size} selecionado(s)`;
     $("#add-selected").disabled=selectedSearch.size===0;
@@ -771,20 +963,22 @@
     const cfg=getConfig(),tmdbKey=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey,omdbKey=cfg.omdbKey||data.settings?.apiKeys?.omdbKey;
     try{
       for(const result of selected){
-        await fetchImdbRatingForItem(result,tmdbKey,omdbKey);
-        if(tmdbKey && !result.metaCheckedAt){
-          try{
-            const meta=await fetchTmdbMetadata(tmdbKey,result.kind,result.tmdbId);
-            if(!result.overview && meta.overview){
-              result.overview=meta.overview;
-              result.overviewLanguage=meta.language;
-            }
-            result.providers=meta.providers||[];
-            result.studio=meta.studio||"";
-            result.genres=meta.genres||[];
-            result.trailerUrl=meta.trailerUrl||"";
-            result.metaCheckedAt=new Date().toISOString();
-          }catch{}
+        if(result.kind!=="book"){
+          await fetchImdbRatingForItem(result,tmdbKey,omdbKey);
+          if(tmdbKey && !result.metaCheckedAt){
+            try{
+              const meta=await fetchTmdbMetadata(tmdbKey,result.kind,result.tmdbId);
+              if(!result.overview && meta.overview){
+                result.overview=meta.overview;
+                result.overviewLanguage=meta.language;
+              }
+              result.providers=meta.providers||[];
+              result.studio=meta.studio||"";
+              result.genres=meta.genres||[];
+              result.trailerUrl=meta.trailerUrl||"";
+              result.metaCheckedAt=new Date().toISOString();
+            }catch{}
+          }
         }
         if(addItem({
           ...result,
@@ -803,22 +997,47 @@
     }
   }
 
-  function openAdd(){selectedSearch.clear();$("#add-error").textContent="";$("#search-results").innerHTML="";$("#search-results")._results=[];$("#selection-bar").hidden=true;$("#add-selected").disabled=true;$("#add-selected").textContent="Adicionar selecionados";$("#manual-section").open=false;document.body.classList.add("search-page-active");$("#search-page").hidden=false;$("#library-section").hidden=true;$(".hero").hidden=true;$(".stats").hidden=true;$("#title-search").focus()}
+  function openAdd(){
+    selectedSearch.clear();
+    $("#add-error").textContent="";
+    $("#search-results").innerHTML="";
+    $("#search-results")._results=[];
+    $("#selection-bar").hidden=true;
+    $("#add-selected").disabled=true;
+    $("#add-selected").textContent="Adicionar selecionados";
+    $("#manual-section").open=false;
+    if(["movie","tv","book"].includes(activeView)){
+      $("#manual-kind").value=activeView;
+    }
+    document.body.classList.add("search-page-active");
+    $("#search-page").hidden=false;
+    $("#library-section").hidden=true;
+    $(".hero").hidden=true;
+    $(".stats").hidden=true;
+    $("#title-search").focus();
+  }
+
   function closeSearchPage(){document.body.classList.remove("search-page-active");$("#search-page").hidden=true;$("#library-section").hidden=false;$(".hero").hidden=false;$(".stats").hidden=false;selectedSearch.clear();render()}
 
   async function openSearchDetail(index){
     const item=$("#search-results")._results?.[index];
     if(!item)return;
     const renderSearchPreview=()=>{
-      const poster=item.poster?`<img class="detail-poster" src="${escapeHtml(item.poster)}" alt="Pôster de ${escapeHtml(item.title)}">`:`<div class="detail-poster poster-placeholder">${escapeHtml(item.title[0]||"?")}</div>`;
+      const poster=item.poster
+        ? `<button type="button" class="detail-poster-btn" data-zoom-poster="${escapeHtml(item.poster)}" data-zoom-title="${escapeHtml(item.title)}" title="Ampliar capa" aria-label="Ver capa em tela cheia"><img class="detail-poster" src="${escapeHtml(item.poster)}" alt="Pôster de ${escapeHtml(item.title)}"><span class="poster-zoom-badge" aria-hidden="true">⤢</span></button>`
+        : `<div class="detail-poster poster-placeholder">${escapeHtml(item.title[0]||"?")}</div>`;
       const synopsisText=item.overview||(item.metaCheckedAt?"Sinopse não disponível.":"Carregando sinopse…");
-      const langNote=item.overview&&item.overviewLanguage&&item.overviewLanguage!=="pt-BR"?'<small class="synopsis-note">Disponível em inglês no TMDB; não há tradução PT-BR cadastrada.</small>':"";
-      const imdbRating=item.imdb?`★ IMDb ${Number(item.imdb).toFixed(1)}`:"★ IMDb Sem nota";
+      const langNote=item.overview&&item.overviewLanguage&&item.overviewLanguage!=="pt-BR"?'<small class="synopsis-note">Sinopse no idioma original disponível.</small>':"";
+      const scorePrefix=item.kind==="book"?"★ Avaliação":"★ IMDb";
+      const imdbRating=item.imdb?`${scorePrefix} ${Number(item.imdb).toFixed(1)}`:`${scorePrefix} Sem nota`;
       const trailerHref=getTrailerLink(item);
-      $("#detail-content").innerHTML=`<div class="detail-layout">${poster}<div class="detail-info"><p class="eyebrow">${item.kind==="movie"?"FILME":"SÉRIE"}</p><h2>${escapeHtml(item.title)}</h2><p>${item.year||"Ano não informado"}</p>${renderWhereToWatch(item)}<div class="detail-rating-row"><div class="detail-rating">${imdbRating}</div><a class="trailer-btn" href="${escapeHtml(trailerHref)}" target="_blank" rel="noopener noreferrer">▶ Trailer</a></div></div></div><section class="detail-synopsis"><h3>Sinopse</h3><p class="${item.overview?"":"synopsis-muted"}">${escapeHtml(synopsisText)}</p>${langNote}</section>`;
+      const videoBtnLabel=item.kind==="book"?"▶ Resenhas":"▶ Trailer";
+      $("#detail-content").innerHTML=`<div class="detail-layout">${poster}<div class="detail-info"><p class="eyebrow">${kindEyebrow(item.kind)}</p><h2>${escapeHtml(item.title)}</h2><p>${item.year||"Ano não informado"}</p>${renderWhereToWatch(item)}<div class="detail-rating-row"><div class="detail-rating">${imdbRating}</div><a class="trailer-btn" href="${escapeHtml(trailerHref)}" target="_blank" rel="noopener noreferrer">${videoBtnLabel}</a></div></div></div><section class="detail-synopsis"><h3>Sinopse</h3><p class="${item.overview?"":"synopsis-muted"}">${escapeHtml(synopsisText)}</p>${langNote}</section>`;
     };
     renderSearchPreview();
     $("#detail-dialog").showModal();
+
+    if(item.kind==="book")return;
 
     const cfg=getConfig();
     const tmdbKey=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey;
@@ -890,7 +1109,7 @@
     [...(remote.items||[]),...(local.items||[])].forEach(item=>{
       const old=map.get(item.id);
       if(!old||new Date(item.updatedAt||item.createdAt||0)>=new Date(old.updatedAt||old.createdAt||0)){
-        map.set(item.id,{...item,providers:normalizeProviders(item.providers)});
+        map.set(item.id,{...item,providers:item.kind==="book"?[]:normalizeProviders(item.providers)});
       }
     });
     const deleted=new Map();
@@ -1002,7 +1221,7 @@
   function setupSwipeSlider(){
     const area=$("#collection-grid");
     const emptyArea=$("#empty-state");
-    const views=["movie","tv","watched"];
+    const views=["movie","tv","watched","book"];
     let startX=0, startY=0, tracking=false;
 
     const onStart=(e)=>{
@@ -1026,6 +1245,8 @@
       activeView=views[nextIdx];
       activeQuickFilter=null;
       render();
+      const activeStat=$(`.stat-action[data-stat-filter="${activeView}"]`);
+      activeStat?.scrollIntoView({behavior:"smooth",inline:"nearest",block:"nearest"});
     };
 
     [area, emptyArea].forEach(el=>{
@@ -1033,6 +1254,14 @@
       el.addEventListener("touchstart",onStart,{passive:true});
       el.addEventListener("touchend",onEnd,{passive:true});
     });
+  }
+
+  function restoreSortPreference(){
+    const savedSort=localStorage.getItem(SORT_KEY);
+    const select=$("#sort-select");
+    if(select && savedSort && [...select.options].some(o=>o.value===savedSort)){
+      select.value=savedSort;
+    }
   }
 
   function events(){
@@ -1049,10 +1278,17 @@
       });
     });
 
+    $("#poster-lightbox")?.addEventListener("click",(e)=>{
+      if(e.target.id==="lightbox-img")$("#poster-lightbox").close();
+    });
+
     $$(".tab").forEach(b=>b.onclick=()=>{activeView=b.dataset.kind;activeQuickFilter=null;render()});
     $$(".stat-action").forEach(b=>{b.onclick=()=>applyStatFilter(b.dataset.statFilter)});
     $("#search-input").oninput=render;
-    $("#sort-select").onchange=render;
+    $("#sort-select").onchange=()=>{
+      localStorage.setItem(SORT_KEY,$("#sort-select").value);
+      render();
+    };
 
     $("#quick-filters").addEventListener("click",e=>{
       const clear=e.target.closest("[data-filter-clear]");
@@ -1117,6 +1353,11 @@
     });
 
     $("#detail-content").addEventListener("click",e=>{
+      const zoomBtn=e.target.closest("[data-zoom-poster]");
+      if(zoomBtn){
+        openPosterLightbox(zoomBtn.dataset.zoomPoster,zoomBtn.dataset.zoomTitle);
+        return;
+      }
       const rate=e.target.closest("[data-detail-rate]");
       if(rate){
         const item=data.items.find(x=>x.id===rate.dataset.id);
@@ -1219,6 +1460,7 @@
     setupSwipeSlider();
   }
 
+  restoreSortPreference();
   events();
   render();
   if("serviceWorker"in navigator&&location.protocol!=="file:")window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
