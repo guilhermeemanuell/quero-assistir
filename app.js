@@ -934,21 +934,58 @@
   }
 
   // Retorna {items, failed}. "failed" diferencia erro de rede/limite de "nenhum resultado".
+  // Faz 3 variações da busca em paralelo (livre, título exato e edições em português) e junta,
+  // pois uma busca livre sozinha pode enterrar o título procurado entre resultados irrelevantes.
   async function fetchGoogleBooksDirect(query){
     const cfg=getConfig();
     const gKey=cfg.gbooksKey||data.settings?.apiKeys?.gbooksKey||"";
-    const base=`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=24&printType=books&orderBy=relevance`;
-    const attempts=gKey?[`${base}&key=${encodeURIComponent(gKey)}`,base]:[base];
-    for(const url of attempts){
-      try{
-        const json=await fetchJsonTimeout(url,8000);
-        return {items:(json.items||[]).map((vol,idx)=>parseGoogleBook(vol,idx)).filter(b=>b.title),failed:false};
-      }catch(e){
-        // chave inválida (400/403): tenta sem a chave; demais erros: segue para o fallback
-        if(!(e.status===400||e.status===403))break;
+    const root="https://www.googleapis.com/books/v1/volumes";
+    const common="&maxResults=20&printType=books";
+    const variants=[
+      `q=${encodeURIComponent(query)}&orderBy=relevance${common}`,
+      `q=${encodeURIComponent(`intitle:"${query}"`)}${common}`,
+      `q=${encodeURIComponent(query)}&langRestrict=pt${common}`
+    ];
+    const run=async v=>{
+      const urls=gKey?[`${root}?${v}&key=${encodeURIComponent(gKey)}`,`${root}?${v}`]:[`${root}?${v}`];
+      let lastErr;
+      for(const url of urls){
+        try{
+          const json=await fetchJsonTimeout(url,8000);
+          return json.items||[];
+        }catch(e){
+          lastErr=e;
+          if(!(e.status===400||e.status===403))break; // chave inválida: tenta sem chave
+        }
+      }
+      throw lastErr;
+    };
+    const settled=await Promise.allSettled(variants.map(run));
+    if(settled.every(r=>r.status==="rejected"))return {items:[],failed:true};
+
+    const seen=new Set(),vols=[];
+    for(const r of settled){
+      if(r.status!=="fulfilled")continue;
+      for(const vol of r.value){
+        if(!vol.id||seen.has(vol.id))continue;
+        seen.add(vol.id);vols.push(vol);
       }
     }
-    return {items:[],failed:true};
+    const norm=t=>String(t||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim();
+    const q=norm(query);
+    const score=vol=>{
+      const t=norm(vol.volumeInfo?.title);
+      if(t===q)return 0;            // título idêntico
+      if(t.startsWith(q))return 1;  // começa com o termo
+      if(t.includes(q))return 2;    // contém o termo
+      return 3;
+    };
+    const items=vols
+      .map((vol,idx)=>({vol,idx,sc:score(vol)}))
+      .sort((x,y)=>x.sc-y.sc||x.idx-y.idx)
+      .map((o,i)=>parseGoogleBook(o.vol,i))
+      .filter(b=>b.title);
+    return {items,failed:false};
   }
 
   async function searchOpenLibrary(query){
@@ -982,7 +1019,7 @@
       if(existing)fill(existing,item);
       else{byKey.set(key,item);merged.push(item)}
     }
-    return merged.slice(0,24);
+    return merged.slice(0,30);
   }
 
   // onPartial(lista) é chamado assim que a primeira fonte responde, sem esperar a mais lenta.
