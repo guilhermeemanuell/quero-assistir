@@ -189,7 +189,6 @@
 
 /* ===== Desktop (801px+) ===== */
 @media(min-width:801px){
-  .topbar{position:sticky;top:0;z-index:15;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(12px)}
   .stats{margin:28px 0 36px;gap:14px}
   .stat-card{padding:14px 18px}
   .section-heading{margin-bottom:18px}
@@ -217,3 +216,6 @@
 .mood-bar i{display:block;min-width:6px}
 .detail-runtime{margin:2px 0 8px;color:var(--muted);font-size:13px;font-weight:600}
 @media(max-width:560px){.year-label{font-size:21px}.year-mood{margin-left:0;width:100%}.year-divider{padding-bottom:10px}}
+
+/* Reserva o espaço da barra de rolagem: evita o conteúdo "pular" ao trocar entre telas curtas e longas */
+html{scrollbar-gutter:stable}
