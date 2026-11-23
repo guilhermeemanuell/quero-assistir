@@ -46,6 +46,12 @@
     });
   }
 
+  // Itens marcados como assistidos antes do recurso de ano: fixa a data atual de referência (updatedAt)
+  function freezeWatchedAt(items){
+    for(const it of items||[]){
+      if(it.watched && !it.watchedAt)it.watchedAt=it.updatedAt||it.createdAt||null;
+    }
+  }
   function loadLocal(){
     try{
       const stored=JSON.parse(localStorage.getItem(STORAGE)||"{}");
@@ -59,6 +65,7 @@
         }
       };
       loaded.deleted = pruneDeleted(loaded.deleted);
+      freezeWatchedAt(loaded.items);
       return loaded;
     }catch{
       return emptyData();
@@ -198,16 +205,9 @@
     const container=$("#quick-filters");
     if(!container)return;
     const baseItems=getBaseViewItems();
-    const providerMap=new Map();
     const genreMap=new Map();
 
     for(const item of baseItems){
-      for(const p of normalizeProviders(item.providers)){
-        const prev=providerMap.get(p.name)||{name:p.name,logo:p.logo,count:0};
-        if(!prev.logo && p.logo)prev.logo=p.logo;
-        prev.count++;
-        providerMap.set(p.name,prev);
-      }
       if(Array.isArray(item.genres)){
         for(const g of item.genres){
           const clean=String(g||"").trim();
@@ -217,17 +217,12 @@
       }
     }
 
-    if(activeQuickFilter){
-      const valid = activeQuickFilter.type==="provider"
-        ? providerMap.has(activeQuickFilter.value)
-        : genreMap.has(activeQuickFilter.value);
-      if(!valid)activeQuickFilter=null;
-    }
+    // a barra mostra apenas gêneros (filtro por streaming removido da interface)
+    if(activeQuickFilter && !(activeQuickFilter.type==="genre" && genreMap.has(activeQuickFilter.value)))activeQuickFilter=null;
 
-    const providers=[...providerMap.values()].sort((a,b)=>b.count-a.count || a.name.localeCompare(b.name,"pt-BR"));
     const genres=[...genreMap.entries()].sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0],"pt-BR")).slice(0,10);
 
-    if(!providers.length && !genres.length){
+    if(!genres.length){
       container.hidden=true;
       container.innerHTML="";
       return;
@@ -236,12 +231,6 @@
     container.hidden=false;
     const allActive=!activeQuickFilter;
     let html=`<button type="button" class="filter-pill ${allActive?"active":""}" data-filter-clear="1">Todos</button>`;
-
-    for(const p of providers){
-      const isAct=activeQuickFilter?.type==="provider" && activeQuickFilter.value===p.name;
-      const icon=p.logo?`<img src="${escapeHtml(p.logo)}" alt="" class="pill-logo" loading="lazy" onerror="this.style.display='none'">`:"";
-      html+=`<button type="button" class="filter-pill ${isAct?"active":""}" data-filter-type="provider" data-filter-value="${escapeHtml(p.name)}">${icon}<span>${escapeHtml(p.name)}</span><small>${p.count}</small></button>`;
-    }
 
     for(const [gName, gCount] of genres){
       const isAct=activeQuickFilter?.type==="genre" && activeQuickFilter.value===gName;
@@ -286,6 +275,36 @@
   function watchedTime(item){return new Date(item.watchedAt||item.updatedAt||item.createdAt||0).getTime()||0}
   function watchedYear(item){const t=watchedTime(item);return t?new Date(t).getFullYear():0}
 
+  const MOOD_COLORS=["#bd91ff","#f77ca8","#ffc857","#57d6a1","#6fb1ff"];
+  // Resumo do ano: gêneros mais assistidos + tempo total
+  function yearMood(items){
+    const genres=new Map();
+    let minutes=0,missing=0;
+    for(const it of items){
+      for(const g of (Array.isArray(it.genres)?it.genres:[])){
+        const n=String(g||"").trim();
+        if(n)genres.set(n,(genres.get(n)||0)+1);
+      }
+      const m=totalMinutes(it);
+      if(m)minutes+=m;else missing++;
+    }
+    const top=[...genres.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],"pt-BR")).slice(0,5);
+    const sum=top.reduce((t,[,c])=>t+c,0);
+    const bar=top.length?`<div class="mood-bar" aria-hidden="true">${top.map(([n,c],i)=>`<i style="flex:${c};background:${MOOD_COLORS[i]}" title="${escapeHtml(n)}: ${c}"></i>`).join("")}</div>`:"";
+    const chips=top.slice(0,3).map(([n,c],i)=>`<span class="mood-chip"><i style="background:${MOOD_COLORS[i]}"></i>${escapeHtml(n)}<b>${c}</b></span>`).join("");
+    let time="";
+    if(minutes>0){
+      const h=Math.floor(minutes/60),mm=minutes%60;
+      const hours=h>0?` · ${h} h${mm?` ${mm} min`:""}`:"";
+      const note=missing?`${missing} sem duração informada`:"";
+      time=`<span class="mood-time" title="${note}">⏱ <b>${minutes.toLocaleString("pt-BR")}</b> min<small>${hours}${missing?" +":""}</small></span>`;
+    }else if(items.some(x=>x.kind!=="book"&&x.tmdbId&&!x.runtimeCheckedAt)){
+      time=`<span class="mood-time mood-loading">⏱ calculando duração…</span>`;
+    }
+    if(!chips&&!time)return "";
+    return `<div class="year-mood">${chips?`<div class="mood-genres">${chips}</div>`:""}${time}${sum?bar:""}</div>`;
+  }
+
   function renderGrid(list){
     if(activeView!=="watched")return list.map(card).join("");
     const groups=new Map();
@@ -297,7 +316,7 @@
     return [...groups.keys()].sort((a,b)=>b-a).map(y=>{
       const items=groups.get(y);
       const label=y||"Sem data";
-      return `<div class="year-divider" role="heading" aria-level="3"><span class="year-label">${label}</span><span class="year-count">${items.length} ${items.length===1?"título":"títulos"}</span></div>${items.map(card).join("")}`;
+      return `<div class="year-divider"><div class="year-head" role="heading" aria-level="3"><span class="year-label">${label}</span><span class="year-count">${items.length} ${items.length===1?"título":"títulos"}</span></div>${yearMood(items)}</div>${items.map(card).join("")}`;
     }).join("");
   }
 
@@ -324,6 +343,7 @@
     const watchedTotal=data.items.filter(x=>x.watched && x.kind!=="book").length;
 
     $("#collection-grid").innerHTML=renderGrid(list);
+    if(activeView==="watched")setTimeout(()=>ensureRuntimes(list),0);
     $("#movie-count").textContent=pendingMovies;
     $("#series-count").textContent=pendingSeries;
     $("#watched-count").textContent=watchedTotal;
@@ -415,6 +435,9 @@
       providers:item.kind==="book"?[]:normalizeProviders(item.providers||[]),
       genres:Array.isArray(item.genres)?item.genres:[],
       trailerUrl:item.trailerUrl||"",
+      runtime:item.runtime||null,
+      episodes:item.episodes||null,
+      runtimeCheckedAt:item.runtimeCheckedAt||null,
       studio:item.studio||"",
       notes:item.notes||"",
       metaCheckedAt:item.metaCheckedAt||null,
@@ -585,6 +608,7 @@
             <div class="detail-rating">${scorePrefix} ${item.imdb?Number(item.imdb).toFixed(1):"Sem nota"}</div>
             <a class="trailer-btn" href="${escapeHtml(trailerHref)}" target="_blank" rel="noopener noreferrer">${videoBtnLabel}</a>
           </div>
+          ${runtimeLine(item)?`<p class="detail-runtime">${runtimeLine(item)}</p>`:""}
           <p>Minha avaliação</p>
           <div class="detail-stars">${[1,2,3,4,5].map(n=>`<button type="button" class="star ${n<=current?"filled":""}" data-detail-rate="${n}" data-id="${item.id}" aria-label="${n===current?"Zerar estrelas":`${n} estrelas`}">★</button>`).join("")}${clearBtn}</div>
         </div>
@@ -606,6 +630,70 @@
     return preferred ? `https://www.youtube.com/watch?v=${encodeURIComponent(preferred.key)}` : "";
   }
 
+  // Duração: filme = minutos totais; série = minutos por episódio + nº de episódios
+  function runtimeFromDetail(kind,d){
+    if(!d)return {runtime:null,episodes:null};
+    if(kind==="movie")return {runtime:Number(d.runtime)||null,episodes:null};
+    const ep=(Array.isArray(d.episode_run_time)?d.episode_run_time.find(n=>n>0):0)||d.last_episode_to_air?.runtime||d.next_episode_to_air?.runtime||null;
+    return {runtime:ep?Number(ep):null,episodes:Number(d.number_of_episodes)||null};
+  }
+  function applyRuntime(target,meta){
+    if(meta && meta.runtime){
+      target.runtime=meta.runtime;
+      target.episodes=meta.episodes||null;
+      target.runtimeCheckedAt=new Date().toISOString();
+    }
+  }
+  async function fetchRuntimeInfo(key,kind,tmdbId){
+    const res=await fetchJsonTimeout(`https://api.themoviedb.org/3/${kind}/${tmdbId}?api_key=${encodeURIComponent(key)}&language=pt-BR`,10000);
+    return runtimeFromDetail(kind,res);
+  }
+  function totalMinutes(item){
+    if(item.kind==="book"||!item.runtime)return 0;
+    return item.kind==="tv"?item.runtime*(item.episodes||1):item.runtime;
+  }
+  function formatMinutes(n){return `${Number(n).toLocaleString("pt-BR")} ${Number(n)===1?"minuto":"minutos"}`}
+  function runtimeLine(item){
+    if(item.kind==="book"||!item.runtime)return "";
+    if(item.kind==="tv"){
+      const eps=item.episodes?` · ${item.episodes} ${item.episodes===1?"episódio":"episódios"}`:"";
+      return `⏱ ${item.runtime} min por episódio${eps}`;
+    }
+    return `⏱ ${formatMinutes(item.runtime)}`;
+  }
+
+  // Preenche a duração de títulos antigos (cadastrados antes deste recurso), em segundo plano.
+  let runtimeBusy=false;
+  async function ensureRuntimes(items){
+    const cfg=getConfig(),key=cfg.tmdbKey||data.settings?.apiKeys?.tmdbKey;
+    if(!key||runtimeBusy)return;
+    const todo=items.filter(x=>x.kind!=="book"&&x.tmdbId&&!x.runtime&&!x.runtimeCheckedAt);
+    if(!todo.length)return;
+    runtimeBusy=true;
+    let changed=false;
+    try{
+      for(const it of todo){
+        try{
+          const info=await fetchRuntimeInfo(key,it.kind,it.tmdbId);
+          const cur=data.items.find(x=>x.id===it.id);
+          if(cur){ // não altera updatedAt: é só um dado derivado
+            cur.runtime=info.runtime;cur.episodes=info.episodes;cur.runtimeCheckedAt=new Date().toISOString();
+            changed=true;
+          }
+        }catch{/* sem rede/limite: tenta de novo mais tarde */}
+      }
+    }finally{runtimeBusy=false}
+    if(changed){
+      saveLocal();
+      const d=$("#detail-dialog");
+      if(d?.open){
+        const openId=$("#detail-content [data-toggle-watched]")?.dataset.toggleWatched;
+        const cur=openId&&data.items.find(x=>x.id===openId);
+        if(cur&&!$("#detail-content [data-save-edit],#detail-content form"))renderDetail(cur);
+      }
+    }
+  }
+
   async function fetchTmdbMetadata(key, kind, tmdbId){
     const base=`https://api.themoviedb.org/3/${kind}/${tmdbId}?api_key=${encodeURIComponent(key)}&append_to_response=videos`;
     const [detailResPt, provRes]=await Promise.all([
@@ -616,9 +704,11 @@
     let studio="";
     let genres=[];
     let trailerUrl="";
+    let rt={runtime:null,episodes:null};
 
     if(detailResPt && detailResPt.ok){
       const d=await detailResPt.json();
+      rt=runtimeFromDetail(kind,d);
       overview=d.overview||"";
       if(overview)language="pt-BR";
       const companies=d.production_companies||[];
@@ -649,6 +739,7 @@
         if(!trailerUrl){
           trailerUrl=extractYoutubeTrailer(dEn.videos);
         }
+        if(!rt.runtime)rt=runtimeFromDetail(kind,dEn);
       }
     }
 
@@ -660,7 +751,7 @@
       providers=normalizeProviders(flatrate);
     }
 
-    return {overview, language, providers, studio, genres, trailerUrl};
+    return {overview, language, providers, studio, genres, trailerUrl, runtime:rt.runtime, episodes:rt.episodes};
   }
 
   async function fetchOpenLibrarySynopsis(item){
@@ -765,6 +856,7 @@
         current.studio=meta.studio||current.studio||"";
         current.genres=meta.genres?.length?meta.genres:(current.genres||[]);
         current.trailerUrl=meta.trailerUrl||current.trailerUrl||"";
+        applyRuntime(current,meta);
         current.metaCheckedAt=new Date().toISOString();
       }
       if(force && omdbKey){
@@ -794,6 +886,7 @@
     if(!item)return;
     renderDetail(item);
     if(!$("#detail-dialog").open)$("#detail-dialog").showModal();
+    if(item.kind!=="book" && !item.runtime && !item.runtimeCheckedAt)ensureRuntimes([item]);
     if(item.kind!=="book" && ((!item.overview && !item.overviewCheckedAt) || !item.metaCheckedAt || !hasValidProviderLogos(item))){
       loadItemMetadata(item);
     }
@@ -1239,6 +1332,7 @@
               result.studio=meta.studio||"";
               result.genres=meta.genres||[];
               result.trailerUrl=meta.trailerUrl||"";
+              applyRuntime(result,meta);
               result.metaCheckedAt=new Date().toISOString();
             }catch{}
           }
@@ -1345,6 +1439,7 @@
           item.studio=meta.studio||"";
           item.genres=meta.genres||[];
           item.trailerUrl=meta.trailerUrl||"";
+          applyRuntime(item,meta);
           item.metaCheckedAt=new Date().toISOString();
         }));
       }
@@ -1434,7 +1529,7 @@
     else chosen=new Date(ls.updatedAt||0)>=new Date(rs.updatedAt||0)?ls:rs;
     return {
       version:1,
-      items:[...map.values()],
+      items:(()=>{const arr=[...map.values()];freezeWatchedAt(arr);return arr})(),
       deleted:pruneDeleted([...deleted.values()]),
       settings:{apiKeys:{tmdbKey:chosen?.apiKeys?.tmdbKey||"",omdbKey:chosen?.apiKeys?.omdbKey||"",gbooksKey:chosen?.apiKeys?.gbooksKey||""},updatedAt:chosen?.updatedAt||null},
       updatedAt:new Date().toISOString()
