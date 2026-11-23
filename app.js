@@ -173,7 +173,8 @@
   }
 
   function getBaseViewItems(){
-    if(activeView==="watched")return data.items.filter(x=>x.watched);
+    if(activeView==="watched")return data.items.filter(x=>x.watched && x.kind!=="book");
+    if(activeView==="book")return data.items.filter(x=>x.kind==="book");
     return data.items.filter(x=>!x.watched && x.kind===activeView);
   }
 
@@ -259,7 +260,17 @@
       list=list.filter(x=>`${x.title} ${x.year||""} ${x.author||""} ${x.notes||""}`.toLocaleLowerCase("pt-BR").includes(q));
     }
 
-    list.sort((a,b)=>sort==="title"?a.title.localeCompare(b.title,"pt-BR"):sort==="imdb"?(Number(b.imdb)||0)-(Number(a.imdb)||0):sort==="myRating"?(b.myRating||0)-(a.myRating||0):sort==="year"?(b.year||0)-(a.year||0):new Date(b.createdAt)-new Date(a.createdAt));
+    list.sort((a,b)=>{
+      // Na aba Livros, os lidos permanecem visíveis, porém sempre por último
+      if(activeView==="book" && Boolean(a.watched)!==Boolean(b.watched)){
+        return Number(Boolean(a.watched)) - Number(Boolean(b.watched));
+      }
+      return sort==="title"?a.title.localeCompare(b.title,"pt-BR")
+        :sort==="imdb"?(Number(b.imdb)||0)-(Number(a.imdb)||0)
+        :sort==="myRating"?(b.myRating||0)-(a.myRating||0)
+        :sort==="year"?(b.year||0)-(a.year||0)
+        :new Date(b.createdAt)-new Date(a.createdAt);
+    });
     return list;
   }
 
@@ -274,7 +285,7 @@
     const noteIndicator=item.notes?`<span class="note-dot" title="${escapeHtml(item.notes)}">✎</span>`:"";
     const scoreLabel=item.kind==="book"?"Aval.":"IMDb";
     const doneRibbon=item.watched?`<span class="watched-ribbon">${item.kind==="book"?"✓ LIDO":"✓ ASSISTIDO"}</span>`:"";
-    return `<article class="media-card" data-card="${item.id}"><div class="poster-wrap" data-open="${item.id}">${poster}<span class="imdb-badge"><b>${scoreLabel}</b> ${item.imdb?Number(item.imdb).toFixed(1):"—"}</span>${doneRibbon}<button class="card-menu" data-menu="${item.id}" aria-label="Opções de ${escapeHtml(item.title)}">⋯</button></div><div class="media-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div><div class="media-meta">${item.year||"Ano não informado"}${kindBadge}${noteIndicator}</div>${stars(item)}</article>`;
+    return `<article class="media-card ${item.watched && item.kind==="book"?"is-read":""}" data-card="${item.id}"><div class="poster-wrap" data-open="${item.id}">${poster}<span class="imdb-badge"><b>${scoreLabel}</b> ${item.imdb?Number(item.imdb).toFixed(1):"—"}</span>${doneRibbon}<button class="card-menu" data-menu="${item.id}" aria-label="Opções de ${escapeHtml(item.title)}">⋯</button></div><div class="media-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div><div class="media-meta">${item.year||"Ano não informado"}${kindBadge}${noteIndicator}</div>${stars(item)}</article>`;
   }
 
   function render(){
@@ -282,22 +293,22 @@
     const list=getItems();
     const pendingMovies=data.items.filter(x=>!x.watched && x.kind==="movie").length;
     const pendingSeries=data.items.filter(x=>!x.watched && x.kind==="tv").length;
-    const pendingBooks=data.items.filter(x=>!x.watched && x.kind==="book").length;
-    const watchedTotal=data.items.filter(x=>x.watched).length;
+    const totalBooks=data.items.filter(x=>x.kind==="book").length;
+    const watchedTotal=data.items.filter(x=>x.watched && x.kind!=="book").length;
 
     $("#collection-grid").innerHTML=list.map(card).join("");
     $("#movie-count").textContent=pendingMovies;
     $("#series-count").textContent=pendingSeries;
     $("#watched-count").textContent=watchedTotal;
-    $("#book-count").textContent=pendingBooks;
+    $("#book-count").textContent=totalBooks;
     $("#tab-movie-count").textContent=pendingMovies;
     $("#tab-tv-count").textContent=pendingSeries;
-    $("#tab-book-count").textContent=pendingBooks;
+    $("#tab-book-count").textContent=totalBooks;
 
     const isWatched=activeView==="watched";
     const isBook=activeView==="book";
     $("#library-eyebrow").textContent=isWatched?"HISTÓRICO":isBook?"SUA ESTANTE":"EXPLORE SUA LISTA";
-    $("#library-title").textContent=isWatched?"Já assisti / li":isBook?"Meus livros":"Minha biblioteca";
+    $("#library-title").textContent=isWatched?"Já assisti":isBook?"Meus livros":"Minha biblioteca";
 
     const randomBtn=$("#random-pick");
     if(randomBtn)randomBtn.disabled=list.length===0;
@@ -318,8 +329,8 @@
         $("#empty-copy").textContent="Toque em 'Todos' nas pílulas acima para voltar a ver sua lista completa.";
         $("#empty-add").hidden=true;
       }else if(isWatched){
-        $("#empty-title").textContent="Nenhum título concluído ainda";
-        $("#empty-copy").textContent="Quando você marcar um filme, série ou livro como concluído, ele aparecerá aqui.";
+        $("#empty-title").textContent="Nenhum título assistido ainda";
+        $("#empty-copy").textContent="Quando você marcar um filme ou série como assistido, ele aparecerá aqui.";
         $("#empty-add").hidden=true;
       }else if(isBook){
         $("#empty-title").textContent="Sua próxima leitura começa aqui";
@@ -344,7 +355,8 @@
   }
 
   function pickRandomTitle(){
-    const list=getItems();
+    const pool=activeView==="book"?getItems().filter(x=>!x.watched):getItems();
+    const list=pool.length?pool:getItems();
     if(!list.length){
       toast("Não há títulos disponíveis nesta visualização para sortear.");
       return;
@@ -897,7 +909,6 @@
         };
       })).filter(r=>r.title).sort((a,b)=>b.popularity-a.popularity);
 
-      // Intercala resultados do TMDB e Google Books para facilitar o acesso a ambos
       const resolved=[];
       const maxLen=Math.max(tmdbResolved.length,booksList.length);
       for(let i=0;i<maxLen;i++){
@@ -1278,8 +1289,9 @@
       });
     });
 
-    $("#poster-lightbox")?.addEventListener("click",(e)=>{
-      if(e.target.id==="lightbox-img")$("#poster-lightbox").close();
+    // Fechar a capa em tela cheia ao clicar em qualquer lugar
+    $("#poster-lightbox")?.addEventListener("click",()=>{
+      $("#poster-lightbox").close();
     });
 
     $$(".tab").forEach(b=>b.onclick=()=>{activeView=b.dataset.kind;activeQuickFilter=null;render()});
@@ -1374,7 +1386,11 @@
         if(item){
           const nextWatched=!item.watched;
           updateItem(item.id,{watched:nextWatched});
-          toast(nextWatched?"Movido para Assistidos.":"Retornado para sua lista.");
+          if(item.kind==="book"){
+            toast(nextWatched?"Livro marcado como lido.":"Livro marcado como não lido.");
+          }else{
+            toast(nextWatched?"Movido para Assistidos.":"Retornado para sua lista.");
+          }
         }
         return;
       }
