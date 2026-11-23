@@ -104,7 +104,8 @@
     if(!url)return "";
     return String(url)
       .replace("https://image.tmdb.org/t/p/w500","https://image.tmdb.org/t/p/original")
-      .replace("-M.jpg","-L.jpg");
+      .replace("-M.jpg","-L.jpg")
+      .replace("zoom=1","zoom=2");
   }
   function logoUrl(path){
     if(!path)return "";
@@ -346,7 +347,7 @@
         $("#empty-add").hidden=false;
       }else{
         $("#empty-title").textContent="Sua próxima maratona começa aqui";
-        $("#empty-copy").textContent="Adicione filmes e séries que você quer assistir. Eles ficarão organizados nesta biblioteca.";
+        $("#empty-copy").textContent="Adicione filmes e séries que você quer acompanhar. Eles ficarão organizados nesta biblioteca.";
         $("#empty-add").textContent="＋ Adicionar primeiro título";
         $("#empty-add").hidden=false;
       }
@@ -848,7 +849,13 @@
     }));
   }
 
-  function parseGoogleBook(vol){
+  function normBookKey(title="", author=""){
+    const t=String(title).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]/g,"");
+    const a=String(author).toLowerCase().split(",")[0].normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]/g,"");
+    return `${t}:${a}`;
+  }
+
+  function parseGoogleBook(vol, rankIndex=0){
     const info=vol.volumeInfo||{};
     const links=info.imageLinks||{};
     let thumb=(links.extraLarge||links.large||links.medium||links.thumbnail||links.smallThumbnail||"").replace(/^http:/i,"https:");
@@ -856,10 +863,13 @@
     const avg=Number(info.averageRating)||0;
     const rating10=avg>0?(avg*2).toFixed(1):"";
     const lang=String(info.language||"").toLowerCase();
+    const author=Array.isArray(info.authors)?info.authors.join(", "):"";
+    const fullTitle=info.subtitle ? `${info.title}: ${info.subtitle}` : (info.title||"");
     return {
       kind:"book",
-      title:info.title||"",
-      author:Array.isArray(info.authors)?info.authors.join(", "):"",
+      title:fullTitle,
+      baseTitle:info.title||"",
+      author,
       year:String(info.publishedDate||"").slice(0,4),
       poster:thumb,
       imdb:rating10,
@@ -876,7 +886,7 @@
       trailerUrl:"",
       studio:info.publisher||"",
       metaCheckedAt:new Date().toISOString(),
-      popularity:avg>0?avg*12:20
+      googleRank:rankIndex
     };
   }
 
@@ -886,10 +896,12 @@
     const avg=Number(doc.ratings_average)||0;
     const rating10=avg>0?(avg*2).toFixed(1):"";
     const firstSentence=Array.isArray(doc.first_sentence)?doc.first_sentence[0]:(doc.first_sentence||"");
+    const author=Array.isArray(doc.author_name)?doc.author_name.slice(0,2).join(", "):"";
     return {
       kind:"book",
       title:doc.title||"",
-      author:Array.isArray(doc.author_name)?doc.author_name.slice(0,2).join(", "):"",
+      baseTitle:doc.title||"",
+      author,
       year:doc.first_publish_year?String(doc.first_publish_year):"",
       poster,
       imdb:rating10,
@@ -906,20 +918,21 @@
       trailerUrl:"",
       studio:Array.isArray(doc.publisher)?doc.publisher[0]:"",
       metaCheckedAt:new Date().toISOString(),
-      popularity:Number(doc.edition_count)||10
+      googleRank:999
     };
   }
 
-  async function searchGoogleBooks(query){
+  async function fetchGoogleBooksDirect(query){
     try{
       const cfg=getConfig();
       const gKey=cfg.gbooksKey||data.settings?.apiKeys?.gbooksKey||"";
       const keyParam=gKey?`&key=${encodeURIComponent(gKey)}`:"";
-      const url=`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=15${keyParam}`;
+      // Busca direta no índice do Google Books (aceita termos em português ou inglês, livros e coletâneas)
+      const url=`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=24&printType=books&orderBy=relevance${keyParam}`;
       const res=await fetch(url);
       if(!res.ok)return [];
       const json=await res.json();
-      return (json.items||[]).map(parseGoogleBook).filter(b=>b.title);
+      return (json.items||[]).map((vol,idx)=>parseGoogleBook(vol,idx)).filter(b=>b.title);
     }catch{
       return [];
     }
@@ -927,7 +940,7 @@
 
   async function searchOpenLibrary(query){
     try{
-      const url=`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=12&fields=key,title,author_name,first_publish_year,cover_i,ratings_average,publisher,subject,first_sentence,edition_count`;
+      const url=`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=15&fields=key,title,author_name,first_publish_year,cover_i,ratings_average,publisher,subject,first_sentence`;
       const res=await fetch(url);
       if(!res.ok)return [];
       const json=await res.json();
@@ -938,20 +951,53 @@
   }
 
   async function searchBooksOnly(query){
-    // Prioriza Google Books; se a cota anônima falhar ou retornar vazio, usa Open Library como fallback imediato
-    const gbList=await searchGoogleBooks(query);
-    if(gbList.length>=3)return gbList;
-    const olList=await searchOpenLibrary(query);
-    const merged=[...gbList];
-    const seen=new Set(gbList.map(b=>`${b.title.toLowerCase().trim()}:${b.author.toLowerCase().split(",")[0].trim()}`));
-    for(const item of olList){
-      const k=`${item.title.toLowerCase().trim()}:${item.author.toLowerCase().split(",")[0].trim()}`;
-      if(!seen.has(k)){
-        seen.add(k);
+    const [gbList, olList]=await Promise.all([
+      fetchGoogleBooksDirect(query),
+      searchOpenLibrary(query)
+    ]);
+
+    const merged=[];
+    const byKey=new Map();
+
+    // 1) Preserva rigorosamente a ordem direta retornada pelo Google (o 1º resultado do Google fica em 1º)
+    for(const item of gbList){
+      const key=normBookKey(item.baseTitle||item.title, item.author);
+      if(!byKey.has(key)){
+        byKey.set(key, item);
         merged.push(item);
+      }else{
+        const existing=byKey.get(key);
+        if(!existing.poster && item.poster)existing.poster=item.poster;
+        if(!existing.overview && item.overview){
+          existing.overview=item.overview;
+          existing.overviewLanguage=item.overviewLanguage;
+        }
+        if(!existing.imdb && item.imdb)existing.imdb=item.imdb;
+        if(!existing.year && item.year)existing.year=item.year;
+        if(!existing.studio && item.studio)existing.studio=item.studio;
       }
     }
-    return merged;
+
+    // 2) Usa a Open Library para preencher capas faltantes nos resultados do Google e complementar resultados
+    for(const olItem of olList){
+      const key=normBookKey(olItem.baseTitle||olItem.title, olItem.author);
+      const existing=byKey.get(key);
+      if(existing){
+        if(!existing.poster && olItem.poster)existing.poster=olItem.poster;
+        if(!existing.overview && olItem.overview){
+          existing.overview=olItem.overview;
+          existing.overviewLanguage=olItem.overviewLanguage;
+        }
+        if(!existing.imdb && olItem.imdb)existing.imdb=olItem.imdb;
+        if(!existing.year && olItem.year)existing.year=olItem.year;
+        if(!existing.openLibKey && olItem.openLibKey)existing.openLibKey=olItem.openLibKey;
+      }else{
+        byKey.set(key, olItem);
+        merged.push(olItem);
+      }
+    }
+
+    return merged.slice(0,24);
   }
 
   async function searchTitles(){
@@ -966,10 +1012,8 @@
       let resolved=[];
 
       if(searchMode==="book"){
-        // Busca exclusivamente livros (Google Books + fallback Open Library)
         resolved=await searchBooksOnly(query);
       }else{
-        // Busca exclusivamente filmes e séries (TMDB)
         if(!key){
           $("#add-error").textContent="Configure sua chave API do TMDB em Ajustes ou use o cadastro manual.";
           return;
@@ -1129,7 +1173,7 @@
       $("#search-page-title").textContent="Buscar livros";
       $("#search-input-label").textContent="Nome do livro ou autor";
       $("#title-search").placeholder="Ex.: O Hobbit ou Dom Casmurro";
-      $("#search-mode-hint").textContent="A busca consulta exclusivamente livros no Google Books.";
+      $("#search-mode-hint").textContent="Busca direta no Google Livros (em português ou inglês).";
       $("#manual-kind").value="book";
     }else{
       $("#search-page-eyebrow").textContent="ADICIONAR À BIBLIOTECA";
