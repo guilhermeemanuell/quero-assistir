@@ -933,59 +933,64 @@
     }
   }
 
-  // Retorna {items, failed}. "failed" diferencia erro de rede/limite de "nenhum resultado".
-  // Faz 3 variações da busca em paralelo (livre, título exato e edições em português) e junta,
-  // pois uma busca livre sozinha pode enterrar o título procurado entre resultados irrelevantes.
+  // Retorna {items, failed, status}. "failed" diferencia erro de rede/limite de "nenhum resultado".
+  // Estratégia econômica (evita estourar o limite sem chave): 1 busca livre; só faz a 2ª
+  // (título exato) se a 1ª não trouxer o título procurado.
   async function fetchGoogleBooksDirect(query){
     const cfg=getConfig();
     const gKey=cfg.gbooksKey||data.settings?.apiKeys?.gbooksKey||"";
     const root="https://www.googleapis.com/books/v1/volumes";
     const common="&maxResults=20&printType=books";
-    const variants=[
-      `q=${encodeURIComponent(query)}&orderBy=relevance${common}`,
-      `q=${encodeURIComponent(`intitle:"${query}"`)}${common}`,
-      `q=${encodeURIComponent(query)}&langRestrict=pt${common}`
-    ];
-    const run=async v=>{
-      const urls=gKey?[`${root}?${v}&key=${encodeURIComponent(gKey)}`,`${root}?${v}`]:[`${root}?${v}`];
+    const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+    let lastStatus=0;
+
+    const run=async qs=>{
+      const urls=gKey?[`${root}?${qs}&key=${encodeURIComponent(gKey)}`,`${root}?${qs}`]:[`${root}?${qs}`];
       let lastErr;
       for(const url of urls){
-        try{
-          const json=await fetchJsonTimeout(url,8000);
-          return json.items||[];
-        }catch(e){
-          lastErr=e;
-          if(!(e.status===400||e.status===403))break; // chave inválida: tenta sem chave
+        for(let attempt=0;attempt<2;attempt++){
+          try{
+            const json=await fetchJsonTimeout(url,8000);
+            return json.items||[];
+          }catch(e){
+            lastErr=e;lastStatus=e.status||0;
+            const transient=!e.status||e.status===429||e.status>=500;
+            if(transient&&attempt===0){await sleep(900);continue}
+            break;
+          }
         }
+        // chave inválida/restrita (400/403): tenta sem chave; outros erros: desiste
+        if(!(lastErr&&(lastErr.status===400||lastErr.status===403)))break;
       }
       throw lastErr;
     };
-    const settled=await Promise.allSettled(variants.map(run));
-    if(settled.every(r=>r.status==="rejected"))return {items:[],failed:true};
 
-    const seen=new Set(),vols=[];
-    for(const r of settled){
-      if(r.status!=="fulfilled")continue;
-      for(const vol of r.value){
-        if(!vol.id||seen.has(vol.id))continue;
-        seen.add(vol.id);vols.push(vol);
-      }
-    }
     const norm=t=>String(t||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim();
     const q=norm(query);
     const score=vol=>{
       const t=norm(vol.volumeInfo?.title);
-      if(t===q)return 0;            // título idêntico
-      if(t.startsWith(q))return 1;  // começa com o termo
-      if(t.includes(q))return 2;    // contém o termo
+      if(t===q)return 0;
+      if(t.startsWith(q))return 1;
+      if(t.includes(q))return 2;
       return 3;
     };
+
+    const seen=new Set(),vols=[];
+    const add=list=>{for(const v of list){if(v.id&&!seen.has(v.id)){seen.add(v.id);vols.push(v)}}};
+    let anyOk=false;
+
+    try{add(await run(`q=${encodeURIComponent(query)}${common}`));anyOk=true}catch{}
+    if(!vols.some(v=>score(v)<=2)){
+      try{add(await run(`q=${encodeURIComponent(`intitle:${query}`)}${common}`));anyOk=true}catch{}
+    }
+    if(!anyOk)return {items:[],failed:true,status:lastStatus};
+
     const items=vols
       .map((vol,idx)=>({vol,idx,sc:score(vol)}))
       .sort((x,y)=>x.sc-y.sc||x.idx-y.idx)
       .map((o,i)=>parseGoogleBook(o.vol,i))
       .filter(b=>b.title);
-    return {items,failed:false};
+    return {items,failed:false,status:0};
   }
 
   async function searchOpenLibrary(query){
@@ -1036,8 +1041,10 @@
       searchOpenLibrary(query).then(r=>{ol=r;olDone=true;notify()})
     ]);
     const list=mergeBookLists(gb.items,ol.items);
-    if(!list.length && gb.failed && ol.failed){
-      throw new Error("Não foi possível consultar as bases de livros agora. Verifique sua conexão e tente novamente.");
+    if(!list.length && gb.failed){
+      // O Google falhou: não dá para afirmar que o livro "não existe" — mostra o motivo real.
+      const why=gb.status===429?"limite de consultas atingido (HTTP 429)":gb.status?`erro HTTP ${gb.status}`:"sem resposta/tempo esgotado";
+      throw new Error(`Google Livros indisponível: ${why}. Aguarde um instante e tente de novo; se persistir, cadastre uma chave gratuita da Google Books API em Ajustes.`);
     }
     return list;
   }
