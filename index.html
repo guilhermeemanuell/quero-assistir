@@ -33,6 +33,15 @@
     </header>
 
     <main>
+      <div id="backup-reminder" class="backup-reminder" role="alert" hidden>
+        <span class="backup-reminder-icon" aria-hidden="true">☁</span>
+        <p id="backup-reminder-text">Faz tempo desde o seu último backup.</p>
+        <div class="backup-reminder-actions">
+          <button type="button" class="primary-button" id="backup-now">Fazer backup agora</button>
+          <button type="button" class="secondary-button" id="backup-later">Depois</button>
+        </div>
+      </div>
+
       <section class="stats" aria-label="Resumo da coleção">
         <button type="button" class="stat-card stat-action" data-stat-filter="movie" aria-label="Mostrar filmes cadastrados"><span class="stat-icon purple">▣</span><span class="stat-copy"><strong id="movie-count">0</strong><small>Filmes</small></span></button>
         <button type="button" class="stat-card stat-action" data-stat-filter="tv" aria-label="Mostrar séries cadastradas"><span class="stat-icon pink">▤</span><span class="stat-copy"><strong id="series-count">0</strong><small>Séries</small></span></button>
@@ -136,8 +145,9 @@
       </div>
       <div class="settings-section">
         <h3>Dados locais</h3>
-        <p>Faça uma cópia da biblioteca em formato JSON ou importe um backup.</p>
-        <div class="settings-actions"><button type="button" class="secondary-button" id="export-data">Exportar backup</button><label class="secondary-button file-button">Importar backup<input id="import-data" type="file" accept="application/json,.json" hidden></label></div>
+        <p>Envie uma cópia da biblioteca ao seu repositório privado (pasta <code>backups/</code>, com as 4 cópias mais recentes) ou baixe/importe um arquivo JSON.</p>
+        <div class="settings-actions"><button type="button" class="primary-button" id="backup-github">☁ Backup no GitHub</button><button type="button" class="secondary-button" id="export-data">Baixar backup (JSON)</button><label class="secondary-button file-button">Importar backup<input id="import-data" type="file" accept="application/json,.json" hidden></label></div>
+        <p id="backup-status" class="field-hint"></p>
       </div>
     </form>
   </dialog>

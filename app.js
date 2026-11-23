@@ -1837,6 +1837,137 @@
       syncInProgress=false;
     }
   }
+  // ===== Backup no GitHub (repositório privado) =====
+  const BACKUP_DIR="backups",BACKUP_KEEP=4,BACKUP_REMIND_DAYS=7;
+  const LAST_BACKUP_KEY="minhaColecao.lastBackup.v1",SNOOZE_KEY="minhaColecao.backupSnooze.v1";
+  let backupBusy=false;
+
+  const lsGet=k=>{try{return localStorage.getItem(k)}catch{return null}};
+  const lsSet=(k,v)=>{try{localStorage.setItem(k,v)}catch{}};
+  function backupConfig(){const c=getConfig();return c.owner&&c.repo&&c.token?{...c,branch:c.branch||"main"}:null}
+  function ghContentsUrl(c,path){return `https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/contents/${path}`}
+  function backupTimeFromName(name){
+    const m=String(name).match(/^backup-(\d{4}-\d\d-\d\d)T(\d\d)-(\d\d)-(\d\d)Z\.json$/);
+    return m?new Date(`${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`):null;
+  }
+  const fmtDateTime=d=>d.toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
+
+  async function ghError(r,what){
+    const d=await r.json().catch(()=>({}));
+    if(r.status===401)return new Error("Token do GitHub inválido ou expirado.");
+    if(r.status===403||r.status===404)return new Error(`${what}: sem permissão ou repositório/branch não encontrado (GitHub ${r.status}). O token precisa de acesso de escrita em "Contents".`);
+    return new Error(`${what} (GitHub ${r.status}): ${d.message||"erro desconhecido."}`);
+  }
+  async function listBackups(c){
+    const r=await fetch(`${ghContentsUrl(c,BACKUP_DIR)}?ref=${encodeURIComponent(c.branch)}&nocache=${Date.now()}`,{headers:ghHeaders(c.token),cache:"no-store"});
+    if(r.status===404)return [];
+    if(!r.ok)throw await ghError(r,"Não foi possível listar os backups");
+    const j=await r.json();
+    return (Array.isArray(j)?j:[]).filter(f=>f.type==="file"&&backupTimeFromName(f.name)).sort((a,b)=>a.name.localeCompare(b.name));
+  }
+  async function readBackupFile(c,file){
+    const r=await fetch(`${ghContentsUrl(c,`${BACKUP_DIR}/${encodeURIComponent(file.name)}`)}?ref=${encodeURIComponent(c.branch)}`,{headers:{...ghHeaders(c.token),"Accept":"application/vnd.github.raw+json"},cache:"no-store"});
+    if(!r.ok)throw await ghError(r,"Não foi possível ler o último backup");
+    return JSON.parse(await r.text());
+  }
+  function lastBackupDate(){
+    const v=lsGet(LAST_BACKUP_KEY);const d=v?new Date(v):null;
+    return d&&!isNaN(d)?d:null;
+  }
+
+  async function backupToGitHub(){
+    if(backupBusy)return;
+    const c=backupConfig();
+    if(!c){toast("Configure o repositório do GitHub em Ajustes para fazer backup.");fillSettings();$("#settings-dialog").showModal();return}
+    if(!data.items.length){toast("A biblioteca está vazia: backup não enviado, para não substituir uma cópia boa por uma vazia.");return}
+    backupBusy=true;
+    const btn=$("#backup-github"),label=btn?btn.textContent:"";
+    if(btn){btn.disabled=true;btn.textContent="Enviando…"}
+    try{
+      let files=await listBackups(c);
+      // evita gastar uma das cópias quando nada mudou desde o último backup
+      if(files.length){
+        try{
+          const last=await readBackupFile(c,files[files.length-1]);
+          if(JSON.stringify(last.items||[])===JSON.stringify(data.items)){
+            lsSet(LAST_BACKUP_KEY,new Date().toISOString());
+            hideBackupReminder();updateBackupStatus();
+            toast("Nada mudou desde o último backup. Ele continua atualizado.");
+            return;
+          }
+        }catch{/* se não der para comparar, segue e envia */}
+      }
+      const now=new Date();
+      const name=`backup-${now.toISOString().slice(0,19).replace(/:/g,"-")}Z.json`;
+      const payload={...data,backupAt:now.toISOString(),backupItems:data.items.length};
+      const r=await fetch(ghContentsUrl(c,`${BACKUP_DIR}/${name}`),{
+        method:"PUT",
+        headers:{...ghHeaders(c.token),"Content-Type":"application/json"},
+        body:JSON.stringify({message:`Backup da biblioteca (${data.items.length} itens)`,content:b64encode(JSON.stringify(payload,null,2)),branch:c.branch})
+      });
+      if(!r.ok)throw await ghError(r,"Falha ao enviar o backup");
+      // mantém só as 2 cópias mais recentes: remove as mais antigas depois de confirmar o envio
+      files=await listBackups(c);
+      let removed=0;
+      while(files.length>BACKUP_KEEP){
+        const old=files.shift();
+        const d=await fetch(ghContentsUrl(c,`${BACKUP_DIR}/${encodeURIComponent(old.name)}`),{
+          method:"DELETE",
+          headers:{...ghHeaders(c.token),"Content-Type":"application/json"},
+          body:JSON.stringify({message:"Remove backup mais antigo",sha:old.sha,branch:c.branch})
+        });
+        if(!d.ok)break;
+        removed++;
+      }
+      lsSet(LAST_BACKUP_KEY,now.toISOString());
+      hideBackupReminder();updateBackupStatus();
+      toast(`Backup enviado ao GitHub (${data.items.length} itens)${removed?"; cópia mais antiga substituída":""}.`);
+    }catch(e){
+      toast(e.message||"Falha ao enviar o backup.");
+    }finally{
+      backupBusy=false;
+      if(btn){btn.disabled=false;btn.textContent=label}
+    }
+  }
+
+  async function updateBackupStatus(){
+    const el=$("#backup-status");if(!el)return;
+    const c=backupConfig();
+    if(!c){el.textContent="Configure o repositório do GitHub acima para ativar o backup na nuvem.";return}
+    const local=lastBackupDate();
+    el.textContent=local?`Último backup neste aparelho: ${fmtDateTime(local)}.`:"Nenhum backup enviado deste aparelho ainda.";
+    try{
+      const files=await listBackups(c);
+      if(files.length){
+        const times=files.map(f=>fmtDateTime(backupTimeFromName(f.name))).reverse();
+        el.textContent=`Cópias no GitHub (pasta ${BACKUP_DIR}/): ${times.join(" · ")}. Guardamos as ${BACKUP_KEEP} mais recentes.`;
+      }else el.textContent="Nenhum backup no GitHub ainda. Clique em \"Backup no GitHub\" para criar o primeiro.";
+    }catch{/* mantém o texto local */}
+  }
+
+  // ----- Lembrete semanal -----
+  function hideBackupReminder(){const b=$("#backup-reminder");if(b)b.hidden=true}
+  async function checkBackupReminder(){
+    if(!data.items.length)return;
+    const snooze=Number(lsGet(SNOOZE_KEY))||0;
+    if(Date.now()<snooze)return;
+    let last=lastBackupDate();
+    const c=backupConfig();
+    if(c){ // a data mais confiável é a do repositório (vale para qualquer aparelho)
+      try{
+        const files=await listBackups(c);
+        const repoLast=files.length?backupTimeFromName(files[files.length-1].name):null;
+        if(repoLast&&(!last||repoLast>last)){last=repoLast;lsSet(LAST_BACKUP_KEY,repoLast.toISOString())}
+      }catch{}
+    }
+    const days=last?Math.floor((Date.now()-last.getTime())/86400000):null;
+    if(last&&days<BACKUP_REMIND_DAYS)return;
+    const box=$("#backup-reminder"),txt=$("#backup-reminder-text");
+    if(!box||!txt)return;
+    txt.textContent=last?`Faz ${days} ${days===1?"dia":"dias"} desde o seu último backup. Que tal salvar uma cópia agora?`:"Você ainda não fez nenhum backup da sua biblioteca. Salve uma cópia agora?";
+    box.hidden=false;
+  }
+
   function exportData(){const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="minha-colecao-backup.json";a.click();URL.revokeObjectURL(a.href)}
   async function importData(file){try{const parsed=JSON.parse(await file.text());if(!Array.isArray(parsed.items))throw new Error("Arquivo não parece ser um backup válido.");data=mergeData(data,parsed);saveLocal();toast("Backup importado.");}catch(e){toast(e.message)}}
 
@@ -1895,7 +2026,7 @@
     $("#empty-add").onclick=openAdd;
     $("#random-pick").onclick=pickRandomTitle;
     $("#search-back").onclick=closeSearchPage;
-    $("#settings-open").onclick=()=>{fillSettings();$("#settings-dialog").showModal()};
+    $("#settings-open").onclick=()=>{fillSettings();$("#settings-dialog").showModal();updateBackupStatus()};
     $$(".close-dialog").forEach(b=>b.addEventListener("click",()=>b.closest("dialog").close()));
 
     $$("dialog").forEach(dlg=>{
@@ -2127,6 +2258,9 @@
     $("#test-sync").onclick=()=>{saveSettings();syncGitHub(true)};
     $("#sync-now").onclick=()=>{saveSettings();syncGitHub(false)};
     $("#export-data").onclick=exportData;
+    $("#backup-github").onclick=backupToGitHub;
+    $("#backup-now").onclick=()=>backupToGitHub();
+    $("#backup-later").onclick=()=>{lsSet(SNOOZE_KEY,String(Date.now()+86400000));hideBackupReminder()};
     $("#import-data").onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=""};
     $("#settings-form").addEventListener("submit",e=>e.preventDefault());
     setupSwipeSlider();
@@ -2136,6 +2270,7 @@
   events();
   render();
   if("serviceWorker"in navigator&&location.protocol!=="file:")window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
+  setTimeout(checkBackupReminder,2500);
   const cfg=getConfig();
   if(cfg.owner&&cfg.repo&&cfg.token){
     setSyncState("connected","GitHub configurado");
