@@ -219,3 +219,27 @@
 
 /* Reserva o espaço da barra de rolagem: evita o conteúdo "pular" ao trocar entre telas curtas e longas */
 html{scrollbar-gutter:stable}
+
+/* Acompanhamento de episódios */
+.ep-badge{position:absolute;left:8px;bottom:14px;padding:4px 8px;border-radius:7px;background:#34264bee;border:1px solid #bd91ff66;color:#e5d4ff;font-size:10px;font-weight:800;backdrop-filter:blur(6px)}
+.ep-progress{position:absolute;left:0;right:0;bottom:0;height:4px;background:#00000088}
+.ep-progress i{display:block;height:100%;background:linear-gradient(90deg,var(--purple),#f078a5)}
+.ep-tracker{margin:18px 0 6px;padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+.ep-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.ep-head h3{margin:0;font-size:15px}
+.ep-summary{font-size:12px;color:var(--muted)}
+.ep-actions{display:flex;gap:8px;flex-wrap:wrap}
+.ep-details{margin-top:12px}
+.ep-details summary{cursor:pointer;font-size:12px;font-weight:700;color:#bd91ff;padding:4px 0}
+.ep-season-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.ep-season-bar select{height:36px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);color:var(--text);padding:0 10px;font-size:12px}
+.ep-season-bar .secondary-button{padding:8px 12px;font-size:12px}
+.ep-list{display:flex;flex-direction:column;max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+.ep-row{display:grid;grid-template-columns:auto 38px 1fr auto;align-items:center;gap:10px;padding:8px 12px;font-size:12px;border-bottom:1px solid #ffffff08;cursor:pointer}
+.ep-row:last-child{border-bottom:0}
+.ep-row:hover{background:#ffffff08}
+.ep-row input{accent-color:var(--purple);width:16px;height:16px}
+.ep-num{color:#bd91ff;font-weight:800}
+.ep-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ep-min{color:var(--muted);font-size:11px}
+.ep-future{opacity:.5;cursor:default}

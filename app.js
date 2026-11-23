@@ -276,20 +276,35 @@
   function watchedYear(item){const t=watchedTime(item);return t?new Date(t).getFullYear():0}
 
   const MOOD_COLORS=["#bd91ff","#f77ca8","#ffc857","#57d6a1","#6fb1ff"];
+
+  // Minutos por ano de um título: filme = ano em que foi marcado; série com episódios marcados = ano de cada episódio;
+  // série concluída sem registro de episódios (antiga) = estimativa (duração × nº de episódios) no ano em que foi marcada.
+  function yearContrib(item){
+    const out=new Map();
+    if(item.kind==="book")return out;
+    const add=(y,m)=>{if(y)out.set(y,(out.get(y)||0)+m)};
+    const log=getLog(item);
+    if(item.kind==="tv"&&log.length){
+      for(const x of log)add(new Date(x.at).getFullYear(),Number(x.min)||0);
+    }else if(item.watched){
+      add(watchedYear(item),totalMinutes(item));
+    }
+    return out;
+  }
+
   // Resumo do ano: gêneros mais assistidos + tempo total
-  function yearMood(items){
+  function yearMood(year,members){
     const genres=new Map();
     let minutes=0,missing=0;
-    for(const it of items){
+    for(const it of members){
       for(const g of (Array.isArray(it.genres)?it.genres:[])){
         const n=String(g||"").trim();
         if(n)genres.set(n,(genres.get(n)||0)+1);
       }
-      const m=totalMinutes(it);
+      const m=yearContrib(it).get(year)||0;
       if(m)minutes+=m;else missing++;
     }
     const top=[...genres.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],"pt-BR")).slice(0,5);
-    const sum=top.reduce((t,[,c])=>t+c,0);
     const bar=top.length?`<div class="mood-bar" aria-hidden="true">${top.map(([n,c],i)=>`<i style="flex:${c};background:${MOOD_COLORS[i]}" title="${escapeHtml(n)}: ${c}"></i>`).join("")}</div>`:"";
     const chips=top.slice(0,3).map(([n,c],i)=>`<span class="mood-chip"><i style="background:${MOOD_COLORS[i]}"></i>${escapeHtml(n)}<b>${c}</b></span>`).join("");
     let time="";
@@ -298,25 +313,32 @@
       const hours=h>0?` · ${h} h${mm?` ${mm} min`:""}`:"";
       const note=missing?`${missing} sem duração informada`:"";
       time=`<span class="mood-time" title="${note}">⏱ <b>${minutes.toLocaleString("pt-BR")}</b> min<small>${hours}${missing?" +":""}</small></span>`;
-    }else if(items.some(x=>x.kind!=="book"&&x.tmdbId&&!x.runtimeCheckedAt)){
+    }else if(members.some(x=>x.kind!=="book"&&x.tmdbId&&!x.runtime&&!x.runtimeCheckedAt)){
       time=`<span class="mood-time mood-loading">⏱ calculando duração…</span>`;
     }
     if(!chips&&!time)return "";
-    return `<div class="year-mood">${chips?`<div class="mood-genres">${chips}</div>`:""}${time}${sum?bar:""}</div>`;
+    return `<div class="year-mood">${chips?`<div class="mood-genres">${chips}</div>`:""}${time}${top.length?bar:""}</div>`;
   }
 
   function renderGrid(list){
     if(activeView!=="watched")return list.map(card).join("");
-    const groups=new Map();
+    const filtering=Boolean($("#search-input").value.trim()||activeQuickFilter);
+    // sem filtros: o tempo do ano inclui também episódios de séries ainda em andamento
+    const candidates=filtering?list:data.items.filter(x=>x.kind!=="book");
+    const cardsByYear=new Map();
     for(const item of list){
       const y=watchedYear(item);
-      if(!groups.has(y))groups.set(y,[]);
-      groups.get(y).push(item);
+      if(!cardsByYear.has(y))cardsByYear.set(y,[]);
+      cardsByYear.get(y).push(item);
     }
-    return [...groups.keys()].sort((a,b)=>b-a).map(y=>{
-      const items=groups.get(y);
+    const years=new Set(cardsByYear.keys());
+    for(const it of candidates)for(const y of yearContrib(it).keys())years.add(y);
+    return [...years].sort((a,b)=>b-a).map(y=>{
+      const items=cardsByYear.get(y)||[];
+      const members=y?candidates.filter(it=>yearContrib(it).has(y)):items;
       const label=y||"Sem data";
-      return `<div class="year-divider"><div class="year-head" role="heading" aria-level="3"><span class="year-label">${label}</span><span class="year-count">${items.length} ${items.length===1?"título":"títulos"}</span></div>${yearMood(items)}</div>${items.map(card).join("")}`;
+      const count=items.length?`${items.length} ${items.length===1?"título":"títulos"}`:"séries em andamento";
+      return `<div class="year-divider"><div class="year-head" role="heading" aria-level="3"><span class="year-label">${label}</span><span class="year-count">${count}</span></div>${yearMood(y,members)}</div>${items.map(card).join("")}`;
     }).join("");
   }
 
@@ -331,7 +353,7 @@
     const noteIndicator=item.notes?`<span class="note-dot" title="${escapeHtml(item.notes)}">✎</span>`:"";
     const scoreLabel=item.kind==="book"?"Aval.":"IMDb";
     const doneRibbon=item.watched?`<span class="watched-ribbon">${item.kind==="book"?"✓ LIDO":"✓ ASSISTIDO"}</span>`:"";
-    return `<article class="media-card ${item.watched && item.kind==="book"?"is-read":""}" data-card="${item.id}"><div class="poster-wrap" data-open="${item.id}">${poster}<span class="imdb-badge"><b>${scoreLabel}</b> ${item.imdb?Number(item.imdb).toFixed(1):"—"}</span>${doneRibbon}<button class="card-menu" data-menu="${item.id}" aria-label="Opções de ${escapeHtml(item.title)}">⋯</button></div><div class="media-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div><div class="media-meta">${item.year||"Ano não informado"}${kindBadge}${noteIndicator}</div>${stars(item)}</article>`;
+    return `<article class="media-card ${item.watched && item.kind==="book"?"is-read":""}" data-card="${item.id}"><div class="poster-wrap" data-open="${item.id}">${poster}<span class="imdb-badge"><b>${scoreLabel}</b> ${item.imdb?Number(item.imdb).toFixed(1):"—"}</span>${doneRibbon}${epCardBadge(item)}<button class="card-menu" data-menu="${item.id}" aria-label="Opções de ${escapeHtml(item.title)}">⋯</button></div><div class="media-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div><div class="media-meta">${item.year||"Ano não informado"}${kindBadge}${noteIndicator}</div>${stars(item)}</article>`;
   }
 
   function render(){
@@ -503,6 +525,205 @@
     return `https://www.youtube.com/results?search_query=${q}`;
   }
 
+  // ===== Acompanhamento de episódios (séries) =====
+  const get=id=>data.items.find(x=>x.id===id);
+  const todayStr=()=>new Date().toISOString().slice(0,10);
+  const epId=(s,e)=>`${s}:${e}`;
+  const getLog=item=>Array.isArray(item.watchLog)?item.watchLog:[];
+  const seasonList=item=>Array.isArray(item.seasons)?item.seasons:[];
+  const tmdbKeyNow=()=>{const c=getConfig();return c.tmdbKey||data.settings?.apiKeys?.tmdbKey||""};
+  const epViewSeason={},epPanelOpen={};
+  let epBusy=false;
+
+  function detailShowing(id){
+    return $("#detail-dialog").open && !$("#inline-edit-form") && $("#detail-content [data-toggle-watched]")?.dataset.toggleWatched===id;
+  }
+  function rerenderDetailIf(id){const it=get(id);if(it&&detailShowing(id))renderDetail(it)}
+
+  function epAvailable(season,ep){
+    const t=todayStr();
+    if(ep&&ep.a)return ep.a<=t;
+    return !!(season.air&&season.air<=t);
+  }
+  function seasonAvailCount(item,season){
+    const eps=item.seasonEps?.[season.n];
+    if(eps)return eps.filter(ep=>epAvailable(season,ep)).length;
+    return season.air&&season.air<=todayStr()?season.count:0;
+  }
+  // "Em dia": todas as temporadas já lançadas estão totalmente assistidas
+  function isCaughtUp(item){
+    const released=seasonList(item).filter(se=>se.air&&se.air<=todayStr());
+    const log=getLog(item);
+    if(!released.length||!log.length)return false;
+    return released.every(se=>{
+      const avail=seasonAvailCount(item,se);
+      return log.filter(x=>x.s===se.n).length>=avail;
+    });
+  }
+  function epProgress(item){
+    if(item.kind!=="tv")return null;
+    const log=getLog(item);
+    if(!log.length)return null;
+    const last=log.reduce((a,b)=>(b.s>a.s||(b.s===a.s&&b.e>a.e))?b:a);
+    const season=seasonList(item).find(x=>x.n===last.s);
+    return {s:last.s,count:log.filter(x=>x.s===last.s).length,total:season?season.count:0};
+  }
+  function epCardBadge(item){
+    const p=epProgress(item);
+    if(!p||item.watched)return "";
+    const pct=p.total?Math.min(100,Math.round(p.count/p.total*100)):0;
+    return `<span class="ep-badge">T${p.s} · ${p.count}${p.total?`/${p.total}`:" ep."}</span>${p.total?`<div class="ep-progress"><i style="width:${pct}%"></i></div>`:""}`;
+  }
+
+  async function fetchTvSeasons(key,tmdbId){
+    const json=await fetchJsonTimeout(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${encodeURIComponent(key)}&language=pt-BR`,10000);
+    const seasons=(json.seasons||[]).filter(x=>x.season_number>0&&x.episode_count>0)
+      .map(x=>({n:x.season_number,count:x.episode_count,air:x.air_date||null}));
+    return {seasons,status:json.status||"",rt:runtimeFromDetail("tv",json)};
+  }
+  async function fetchSeasonEps(key,tmdbId,n){
+    const json=await fetchJsonTimeout(`https://api.themoviedb.org/3/tv/${tmdbId}/season/${n}?api_key=${encodeURIComponent(key)}&language=pt-BR`,10000);
+    return (json.episodes||[]).map(e=>({e:e.episode_number,r:e.runtime||null,t:e.name||"",a:e.air_date||null}));
+  }
+  async function ensureTvSeasons(item){
+    if(item.kind!=="tv"||!item.tmdbId||seasonList(item).length)return false;
+    const key=tmdbKeyNow();if(!key)return false;
+    try{
+      const r=await fetchTvSeasons(key,item.tmdbId);
+      const cur=get(item.id);if(!cur||!r.seasons.length)return false;
+      cur.seasons=r.seasons;cur.tvStatus=r.status;
+      if(!cur.runtime&&r.rt.runtime){cur.runtime=r.rt.runtime;cur.episodes=r.rt.episodes;cur.runtimeCheckedAt=new Date().toISOString()}
+      return true;
+    }catch{return false}
+  }
+  async function ensureSeasonEps(item,n){
+    if(get(item.id)?.seasonEps?.[n])return true;
+    const key=tmdbKeyNow();if(!key||!item.tmdbId)return false;
+    try{
+      const eps=await fetchSeasonEps(key,item.tmdbId,n);
+      const cur=get(item.id);if(!cur)return false;
+      cur.seasonEps={...(cur.seasonEps||{}),[n]:eps};
+      return true;
+    }catch{return false}
+  }
+  function epMinutes(item,s,e){
+    const ep=item.seasonEps?.[s]?.find(x=>x.e===e);
+    return ep?.r||item.runtime||0;
+  }
+
+  // Grava o novo registro de episódios; conclui a série sozinha ao ficar em dia (ou a reabre se deixar de estar)
+  function applyLog(id,newLog,note){
+    const item=get(id);if(!item)return;
+    const patch={watchLog:newLog};
+    const caught=isCaughtUp({...item,watchLog:newLog});
+    let finished=false;
+    if(!item.watched&&caught){patch.watched=true;patch.watchedAt=new Date().toISOString();patch.completedByEpisodes=true;finished=true}
+    else if(item.watched&&item.completedByEpisodes&&!caught){patch.watched=false;patch.watchedAt=null;patch.completedByEpisodes=false}
+    updateItem(id,patch);
+    toast(finished?"Última temporada lançada concluída! Série movida para Assistidos.":(note||"Progresso atualizado."));
+  }
+
+  async function markNextEpisode(id){
+    if(epBusy)return;epBusy=true;
+    try{
+      let item=get(id);if(!item||item.kind!=="tv")return;
+      if(!tmdbKeyNow()||!item.tmdbId){toast("Configure a chave TMDB em Ajustes para acompanhar episódios.");return}
+      if(!seasonList(item).length){
+        if(!await ensureTvSeasons(item)){toast("Não foi possível carregar as temporadas agora.");return}
+        item=get(id);
+      }
+      const seen=new Set(getLog(item).map(x=>epId(x.s,x.e)));
+      let target=null;
+      for(const se of seasonList(item)){
+        if(!(se.air&&se.air<=todayStr()))continue;
+        if(!await ensureSeasonEps(item,se.n)){toast("Falha ao carregar a temporada. Tente novamente.");return}
+        item=get(id);
+        const next=(item.seasonEps[se.n]||[]).find(ep=>epAvailable(se,ep)&&!seen.has(epId(se.n,ep.e)));
+        if(next){target={s:se.n,e:next.e};break}
+      }
+      if(!target){
+        if(!item.watched&&isCaughtUp(item))applyLog(id,getLog(item));
+        else toast("Você já assistiu a todos os episódios lançados.");
+        return;
+      }
+      const entry={s:target.s,e:target.e,at:new Date().toISOString(),min:epMinutes(item,target.s,target.e)};
+      applyLog(id,[...getLog(item),entry],`Temporada ${entry.s}, episódio ${entry.e} marcado.`);
+    }finally{epBusy=false}
+  }
+  function undoLastEpisode(id){
+    const item=get(id);if(!item)return;
+    const log=getLog(item);if(!log.length)return;
+    const last=log[log.length-1];
+    applyLog(id,log.slice(0,-1),`Temporada ${last.s}, episódio ${last.e} desmarcado.`);
+  }
+  async function toggleEpisode(id,s,e,on){
+    const item=get(id);if(!item)return;
+    const log=getLog(item).filter(x=>!(x.s===s&&x.e===e));
+    if(on)log.push({s,e,at:new Date().toISOString(),min:epMinutes(item,s,e)});
+    applyLog(id,log);
+  }
+  async function markSeason(id,n,on){
+    if(epBusy)return;epBusy=true;
+    try{
+      const item=get(id);if(!item)return;
+      let log=getLog(item).filter(x=>x.s!==n);
+      if(on){
+        if(!await ensureSeasonEps(item,n)){toast("Falha ao carregar a temporada.");return}
+        const cur=get(id),se=seasonList(cur).find(x=>x.n===n);
+        const old=getLog(cur).filter(x=>x.s===n);
+        const keep=new Map(old.map(x=>[x.e,x]));
+        for(const ep of cur.seasonEps[n]||[]){
+          if(se&&!epAvailable(se,ep))continue;
+          log.push(keep.get(ep.e)||{s:n,e:ep.e,at:new Date().toISOString(),min:ep.r||cur.runtime||0});
+        }
+      }
+      applyLog(id,log,on?`Temporada ${n} marcada como assistida.`:`Temporada ${n} desmarcada.`);
+    }finally{epBusy=false}
+  }
+  async function loadSeasonView(id,n){
+    const item=get(id);if(!item||item.seasonEps?.[n])return;
+    if(await ensureSeasonEps(item,n)){saveLocal();rerenderDetailIf(id)}
+  }
+
+  function episodeSection(item){
+    if(item.kind!=="tv"||!item.tmdbId)return "";
+    const seasons=seasonList(item),log=getLog(item);
+    const minutes=log.reduce((t,x)=>t+(x.min||0),0);
+    const prog=epProgress(item);
+    const summary=log.length
+      ? `${log.length} ${log.length===1?"episódio assistido":"episódios assistidos"}${minutes?` · ${minutes.toLocaleString("pt-BR")} min`:""}${prog&&prog.total?` · Temporada ${prog.s}: ${prog.count} de ${prog.total}`:""}`
+      : "Nenhum episódio marcado ainda";
+    const sel=epViewSeason[item.id]||prog?.s||seasons[0]?.n||1;
+    const open=epPanelOpen[item.id];
+    let list="";
+    if(open&&seasons.length){
+      const eps=item.seasonEps?.[sel];
+      const seen=new Set(log.map(x=>epId(x.s,x.e)));
+      const se=seasons.find(x=>x.n===sel)||{n:sel};
+      list=eps
+        ? `<div class="ep-list">${eps.map(ep=>{
+            const ok=epAvailable(se,ep);
+            return `<label class="ep-row ${ok?"":"ep-future"}"><input type="checkbox" data-ep-check data-s="${sel}" data-e="${ep.e}" ${seen.has(epId(sel,ep.e))?"checked":""} ${ok?"":"disabled"}><span class="ep-num">E${ep.e}</span><span class="ep-title">${escapeHtml(ep.t||"Episódio "+ep.e)}</span><span class="ep-min">${ep.r?ep.r+" min":(ok?"":"em breve")}</span></label>`;
+          }).join("")}</div>`
+        : `<p class="field-hint">Carregando episódios…</p>`;
+    }
+    const options=seasons.map(x=>`<option value="${x.n}" ${x.n===sel?"selected":""}>Temporada ${x.n}</option>`).join("");
+    return `<section class="ep-tracker">
+      <div class="ep-head"><h3>Episódios</h3><span class="ep-summary">${summary}</span></div>
+      <div class="ep-actions">
+        <button type="button" class="primary-button" data-ep-next="${item.id}">＋ 1 episódio assistido</button>
+        <button type="button" class="secondary-button" data-ep-undo="${item.id}" ${log.length?"":"disabled"}>↶ Desfazer último</button>
+      </div>
+      ${seasons.length?`<details class="ep-details" data-ep-details="${item.id}" ${open?"open":""}>
+        <summary>Marcar por temporada</summary>
+        <div class="ep-season-bar"><select data-ep-season="${item.id}" aria-label="Temporada">${options}</select>
+          <button type="button" class="secondary-button" data-ep-season-all="${item.id}" data-s="${sel}">Marcar toda</button>
+          <button type="button" class="secondary-button" data-ep-season-none="${item.id}" data-s="${sel}">Limpar</button></div>
+        ${list}
+      </details>`:`<p class="field-hint">Carregando temporadas…</p>`}
+    </section>`;
+  }
+
   let lightboxToken=0;
   function openPosterLightbox(src, alt="Capa ampliada"){
     if(!src)return;
@@ -613,6 +834,7 @@
           <div class="detail-stars">${[1,2,3,4,5].map(n=>`<button type="button" class="star ${n<=current?"filled":""}" data-detail-rate="${n}" data-id="${item.id}" aria-label="${n===current?"Zerar estrelas":`${n} estrelas`}">★</button>`).join("")}${clearBtn}</div>
         </div>
       </div>
+      ${episodeSection(item)}
       ${synopsis}
       ${notesSection}
       <div class="detail-actions">
@@ -688,8 +910,7 @@
       const d=$("#detail-dialog");
       if(d?.open){
         const openId=$("#detail-content [data-toggle-watched]")?.dataset.toggleWatched;
-        const cur=openId&&data.items.find(x=>x.id===openId);
-        if(cur&&!$("#detail-content [data-save-edit],#detail-content form"))renderDetail(cur);
+        if(openId)rerenderDetailIf(openId);
       }
     }
   }
@@ -887,6 +1108,7 @@
     renderDetail(item);
     if(!$("#detail-dialog").open)$("#detail-dialog").showModal();
     if(item.kind!=="book" && !item.runtime && !item.runtimeCheckedAt)ensureRuntimes([item]);
+    if(item.kind==="tv" && item.tmdbId && !seasonList(item).length){ensureTvSeasons(item).then(ok=>{if(ok){saveLocal();rerenderDetailIf(id)}})}
     if(item.kind!=="book" && ((!item.overview && !item.overviewCheckedAt) || !item.metaCheckedAt || !hasValidProviderLogos(item))){
       loadItemMetadata(item);
     }
@@ -1762,6 +1984,34 @@
       if(open)openDetail(open.dataset.open);
     });
 
+    $("#detail-content").addEventListener("change",e=>{
+      const chk=e.target.closest("[data-ep-check]");
+      if(chk){
+        const id=$("#detail-content [data-ep-details]")?.dataset.epDetails;
+        if(id)toggleEpisode(id,Number(chk.dataset.s),Number(chk.dataset.e),chk.checked);
+        return;
+      }
+      const sel=e.target.closest("[data-ep-season]");
+      if(sel){
+        const id=sel.dataset.epSeason,n=Number(sel.value);
+        epViewSeason[id]=n;
+        rerenderDetailIf(id);
+        loadSeasonView(id,n);
+      }
+    });
+    $("#detail-content").addEventListener("toggle",e=>{
+      const d=e.target.closest?.("[data-ep-details]");
+      if(!d)return;
+      const id=d.dataset.epDetails;
+      const was=!!epPanelOpen[id];
+      epPanelOpen[id]=d.open;
+      if(was===d.open)return; // evita laço: o próprio re-render recria o <details>
+      if(d.open){
+        const it=get(id),n=epViewSeason[id]||epProgress(it)?.s||seasonList(it)[0]?.n||1;
+        loadSeasonView(id,n);
+        rerenderDetailIf(id);
+      }
+    },true);
     $("#detail-content").addEventListener("click",e=>{
       const zoomBtn=e.target.closest("[data-zoom-poster]");
       if(zoomBtn){
@@ -1783,7 +2033,7 @@
         const item=data.items.find(x=>x.id===toggle.dataset.toggleWatched);
         if(item){
           const nextWatched=!item.watched;
-          updateItem(item.id,{watched:nextWatched,watchedAt:nextWatched?new Date().toISOString():null});
+          updateItem(item.id,{watched:nextWatched,watchedAt:nextWatched?new Date().toISOString():null,completedByEpisodes:false});
           if(item.kind==="book"){
             toast(nextWatched?"Livro marcado como lido.":"Livro marcado como não lido.");
           }else{
@@ -1792,6 +2042,14 @@
         }
         return;
       }
+      const epNext=e.target.closest("[data-ep-next]");
+      if(epNext){markNextEpisode(epNext.dataset.epNext);return}
+      const epUndo=e.target.closest("[data-ep-undo]");
+      if(epUndo){undoLastEpisode(epUndo.dataset.epUndo);return}
+      const epAll=e.target.closest("[data-ep-season-all]");
+      if(epAll){markSeason(epAll.dataset.epSeasonAll,Number(epAll.dataset.s),true);return}
+      const epNone=e.target.closest("[data-ep-season-none]");
+      if(epNone){markSeason(epNone.dataset.epSeasonNone,Number(epNone.dataset.s),false);return}
       const saveNoteBtn=e.target.closest("[data-save-note]");
       if(saveNoteBtn){
         const id=saveNoteBtn.dataset.saveNote;
