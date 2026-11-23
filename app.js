@@ -276,9 +276,29 @@
         :sort==="imdb"?(Number(b.imdb)||0)-(Number(a.imdb)||0)
         :sort==="myRating"?(b.myRating||0)-(a.myRating||0)
         :sort==="year"?(b.year||0)-(a.year||0)
+        :activeView==="watched"?watchedTime(b)-watchedTime(a)
         :new Date(b.createdAt)-new Date(a.createdAt);
     });
     return list;
+  }
+
+  // Data em que foi assistido. Itens antigos (sem watchedAt) usam a última atualização como aproximação.
+  function watchedTime(item){return new Date(item.watchedAt||item.updatedAt||item.createdAt||0).getTime()||0}
+  function watchedYear(item){const t=watchedTime(item);return t?new Date(t).getFullYear():0}
+
+  function renderGrid(list){
+    if(activeView!=="watched")return list.map(card).join("");
+    const groups=new Map();
+    for(const item of list){
+      const y=watchedYear(item);
+      if(!groups.has(y))groups.set(y,[]);
+      groups.get(y).push(item);
+    }
+    return [...groups.keys()].sort((a,b)=>b-a).map(y=>{
+      const items=groups.get(y);
+      const label=y||"Sem data";
+      return `<div class="year-divider" role="heading" aria-level="3"><span class="year-label">${label}</span><span class="year-count">${items.length} ${items.length===1?"título":"títulos"}</span></div>${items.map(card).join("")}`;
+    }).join("");
   }
 
   function stars(item){
@@ -303,7 +323,7 @@
     const totalBooks=data.items.filter(x=>x.kind==="book").length;
     const watchedTotal=data.items.filter(x=>x.watched && x.kind!=="book").length;
 
-    $("#collection-grid").innerHTML=list.map(card).join("");
+    $("#collection-grid").innerHTML=renderGrid(list);
     $("#movie-count").textContent=pendingMovies;
     $("#series-count").textContent=pendingSeries;
     $("#watched-count").textContent=watchedTotal;
@@ -358,14 +378,12 @@
     }
   }
 
-  function applyStatFilter(filter, scroll=true){
+  function applyStatFilter(filter){
     $("#search-input").value="";
     activeQuickFilter=null;
     activeView=filter;
     render();
-    const activeStat=$(`.stat-action[data-stat-filter="${filter}"]`);
-    activeStat?.scrollIntoView({behavior:"smooth",inline:"nearest",block:"nearest"});
-    if(scroll)$("#library-section")?.scrollIntoView({behavior:"smooth",block:"start"});
+    // sem scrollIntoView: a página não deve "pular" ao trocar de categoria
   }
 
   function pickRandomTitle(){
@@ -1272,12 +1290,11 @@
     document.body.classList.add("search-page-active");
     $("#search-page").hidden=false;
     $("#library-section").hidden=true;
-    $(".hero").hidden=true;
     $(".stats").hidden=true;
     $("#title-search").focus();
   }
 
-  function closeSearchPage(){document.body.classList.remove("search-page-active");$("#search-page").hidden=true;$("#library-section").hidden=false;$(".hero").hidden=false;$(".stats").hidden=false;selectedSearch.clear();render()}
+  function closeSearchPage(){document.body.classList.remove("search-page-active");$("#search-page").hidden=true;$("#library-section").hidden=false;$(".stats").hidden=false;selectedSearch.clear();render()}
 
   async function openSearchDetail(index){
     const item=$("#search-results")._results?.[index];
@@ -1533,8 +1550,12 @@
       activeView=views[nextIdx];
       activeQuickFilter=null;
       render();
+      // rola só o slider horizontal de categorias (celular), nunca a página
       const activeStat=$(`.stat-action[data-stat-filter="${activeView}"]`);
-      activeStat?.scrollIntoView({behavior:"smooth",inline:"nearest",block:"nearest"});
+      const slider=activeStat?.parentElement;
+      if(activeStat&&slider&&slider.scrollWidth>slider.clientWidth){
+        slider.scrollTo({left:activeStat.offsetLeft-(slider.clientWidth-activeStat.offsetWidth)/2,behavior:"smooth"});
+      }
     };
 
     [area, emptyArea].forEach(el=>{
@@ -1667,7 +1688,7 @@
         const item=data.items.find(x=>x.id===toggle.dataset.toggleWatched);
         if(item){
           const nextWatched=!item.watched;
-          updateItem(item.id,{watched:nextWatched});
+          updateItem(item.id,{watched:nextWatched,watchedAt:nextWatched?new Date().toISOString():null});
           if(item.kind==="book"){
             toast(nextWatched?"Livro marcado como lido.":"Livro marcado como não lido.");
           }else{
